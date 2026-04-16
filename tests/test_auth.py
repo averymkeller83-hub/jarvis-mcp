@@ -72,3 +72,65 @@ def test_list_users(tmp_path: Path):
     assert len(users) == 2
     names = {u.username for u in users}
     assert names == {"a", "b"}
+
+
+import time
+
+from src.auth.jwt import (
+    create_access_token,
+    create_refresh_token,
+    verify_token,
+    load_or_create_secret,
+)
+
+
+# ── JWT ────────────────────────────────────────────────────────────
+
+
+def test_load_or_create_secret(tmp_path: Path):
+    path = tmp_path / "auth_secret.toml"
+    secret1 = load_or_create_secret(path)
+    assert len(secret1) >= 32
+    secret2 = load_or_create_secret(path)
+    assert secret1 == secret2  # stable across loads
+
+
+def test_create_and_verify_access_token(tmp_path: Path):
+    secret = load_or_create_secret(tmp_path / "auth_secret.toml")
+    token = create_access_token(
+        username="avery", role="admin", secret=secret
+    )
+    payload = verify_token(token, secret=secret)
+    assert payload["sub"] == "avery"
+    assert payload["role"] == "admin"
+    assert payload["type"] == "access"
+
+
+def test_create_and_verify_refresh_token(tmp_path: Path):
+    secret = load_or_create_secret(tmp_path / "auth_secret.toml")
+    token = create_refresh_token(username="avery", secret=secret)
+    payload = verify_token(token, secret=secret)
+    assert payload["sub"] == "avery"
+    assert payload["type"] == "refresh"
+
+
+def test_verify_expired_token(tmp_path: Path):
+    secret = load_or_create_secret(tmp_path / "auth_secret.toml")
+    token = create_access_token(
+        username="avery", role="admin", secret=secret, ttl_seconds=0
+    )
+    time.sleep(1)
+    assert verify_token(token, secret=secret) is None
+
+
+def test_verify_invalid_token(tmp_path: Path):
+    secret = load_or_create_secret(tmp_path / "auth_secret.toml")
+    assert verify_token("garbage.token.here", secret=secret) is None
+
+
+def test_verify_wrong_secret(tmp_path: Path):
+    secret = load_or_create_secret(tmp_path / "auth_secret.toml")
+    token = create_access_token(
+        username="avery", role="admin", secret=secret
+    )
+    assert verify_token(token, secret="wrong-secret") is None
