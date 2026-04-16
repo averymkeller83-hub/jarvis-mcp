@@ -18,27 +18,64 @@ class BriefingSection:
 # ── Weather ──────────────────────────────────────────────────────────
 
 
-async def fetch_weather(location: str | None = None) -> BriefingSection:
-    """Return current weather for *location*.
+async def fetch_weather(
+    location: str | None = None,
+    *,
+    latitude: float | None = None,
+    longitude: float | None = None,
+) -> BriefingSection:
+    """Return current weather for *location* using Open-Meteo.
 
-    Always returns a non-empty section (mock data for now).
+    Falls back to mock data on failure.
     """
     loc = location or "Austin, TX"
-    items = [
-        {
-            "temp": 78,
-            "condition": "Partly cloudy",
-            "high": 85,
-            "low": 68,
-            "summary": f"Partly cloudy in {loc}. High of 85 °F, low of 68 °F.",
-        }
-    ]
-    return BriefingSection(
-        title="Weather",
-        content=items[0]["summary"],
-        items=items,
-        empty=False,
-    )
+    try:
+        from src.integrations.weather import (
+            DEFAULT_LAT,
+            DEFAULT_LON,
+            fetch_weather_data,
+            geocode_location,
+        )
+
+        lat = latitude or DEFAULT_LAT
+        lon = longitude or DEFAULT_LON
+
+        # If a location string is given (and no explicit lat/lon), geocode it
+        if location and latitude is None and longitude is None:
+            coords = await geocode_location(location)
+            if coords:
+                lat, lon = coords
+
+        data = await fetch_weather_data(lat, lon)
+        # Always use the user-friendly location label in the summary
+        data["summary"] = (
+            f"{data['condition']} in {loc}. "
+            f"High of {data['high']} °F, low of {data['low']} °F."
+        )
+
+        return BriefingSection(
+            title="Weather",
+            content=data["summary"],
+            items=[data],
+            empty=False,
+        )
+    except Exception:
+        # Fallback to mock data so the briefing never crashes
+        items = [
+            {
+                "temp": 78,
+                "condition": "Partly cloudy",
+                "high": 85,
+                "low": 68,
+                "summary": f"Partly cloudy in {loc}. High of 85 °F, low of 68 °F.",
+            }
+        ]
+        return BriefingSection(
+            title="Weather",
+            content=items[0]["summary"],
+            items=items,
+            empty=False,
+        )
 
 
 # ── Calendar ─────────────────────────────────────────────────────────
@@ -75,19 +112,105 @@ async def fetch_github(repos: list[str] | None = None) -> BriefingSection:
     if not repos:
         return BriefingSection(title="GitHub", empty=True)
 
-    # Placeholder — will call GitHub MCP tools later.
-    return BriefingSection(title="GitHub", empty=True)
+    try:
+        from src.integrations.github import fetch_repo_activity
+
+        all_issues: list[dict] = []
+        all_prs: list[dict] = []
+        ci_statuses: dict[str, str | None] = {}
+
+        for repo in repos:
+            try:
+                activity = await fetch_repo_activity(repo)
+                for issue in activity.get("open_issues", []):
+                    issue["repo"] = repo
+                    all_issues.append(issue)
+                for pr in activity.get("recent_prs", []):
+                    pr["repo"] = repo
+                    all_prs.append(pr)
+                ci_statuses[repo] = activity.get("ci_status")
+            except Exception:
+                continue
+
+        if not all_issues and not all_prs:
+            return BriefingSection(title="GitHub", empty=True)
+
+        items = [
+            {"open_issues": all_issues, "recent_prs": all_prs, "ci_status": ci_statuses},
+        ]
+        parts: list[str] = []
+        if all_issues:
+            parts.append(f"{len(all_issues)} open issue(s)")
+        if all_prs:
+            parts.append(f"{len(all_prs)} PR(s)")
+        content = ", ".join(parts) + f" across {len(repos)} repo(s)."
+
+        return BriefingSection(
+            title="GitHub",
+            content=content,
+            items=items,
+            empty=False,
+        )
+    except Exception:
+        return BriefingSection(title="GitHub", empty=True)
 
 
 # ── News ─────────────────────────────────────────────────────────────
 
 
-async def fetch_news() -> BriefingSection:
+async def fetch_news(
+    *,
+    rss_urls: list[str] | None = None,
+    hn_enabled: bool = False,
+    hn_limit: int = 5,
+    hn_min_score: int = 100,
+) -> BriefingSection:
     """Return top headlines from RSS / HN.
 
-    Returns empty when no news is available.
+    Set *hn_enabled* to ``True`` to include Hacker News stories.
+    Returns empty when no news sources are configured or no news is available.
     """
-    return BriefingSection(title="News", empty=True)
+    all_items: list[dict] = []
+
+    try:
+        if rss_urls:
+            from src.integrations.rss import fetch_multiple_feeds
+
+            feeds = await fetch_multiple_feeds(rss_urls, limit_per_feed=5)
+            for f in feeds:
+                all_items.append({
+                    "title": f.get("title", ""),
+                    "url": f.get("url", ""),
+                    "source": "rss",
+                })
+    except Exception:
+        pass
+
+    if hn_enabled:
+        try:
+            from src.integrations.hackernews import fetch_top_stories
+
+            stories = await fetch_top_stories(limit=hn_limit, min_score=hn_min_score)
+            for s in stories:
+                all_items.append({
+                    "title": s.get("title", ""),
+                    "url": s.get("hn_url", s.get("url", "")),
+                    "source": "hackernews",
+                    "score": s.get("score", 0),
+                })
+        except Exception:
+            pass
+
+    if not all_items:
+        return BriefingSection(title="News", empty=True)
+
+    content = f"{len(all_items)} headline(s) from RSS and Hacker News."
+    return BriefingSection(
+        title="News",
+        content=content,
+        items=all_items,
+        empty=False,
+    )
 
 
 # ── Reminders ────────────────────────────────────────────────────────

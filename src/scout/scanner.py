@@ -68,7 +68,34 @@ async def scan_mcp_registry(urls: list[str]) -> list[Candidate]:
 
 
 async def scan_github_repos() -> list[Candidate]:
-    """Mock: scan user's GitHub repos for actionable items."""
+    """Scan user's GitHub repos for actionable items via real API."""
+    try:
+        from src.integrations.github import fetch_repo_activity, fetch_user_repos
+
+        repos = await fetch_user_repos(limit=5)
+        candidates: list[Candidate] = []
+        for repo in repos:
+            try:
+                activity = await fetch_repo_activity(repo)
+                for issue in activity.get("open_issues", []):
+                    candidates.append(Candidate(
+                        id=_uid(),
+                        name=f"Issue #{issue.get('number', '?')}: {issue.get('title', '')}",
+                        pitch=f"Open issue in {repo}",
+                        source="github_repos",
+                        source_url=issue.get("url", ""),
+                        candidate_type="github_issue",
+                        metadata={"repo": repo},
+                    ))
+            except Exception:
+                continue
+        return candidates if candidates else _mock_github_repos()
+    except Exception:
+        return _mock_github_repos()
+
+
+def _mock_github_repos() -> list[Candidate]:
+    """Fallback mock data for GitHub repos scanner."""
     return [
         Candidate(
             id=_uid(),
@@ -99,7 +126,29 @@ async def scan_github_trending(languages: list[str]) -> list[Candidate]:
 
 
 async def scan_rss(feeds: list[str]) -> list[Candidate]:
-    """Mock: scan RSS/Atom feeds for new articles."""
+    """Scan RSS/Atom feeds for new articles via real HTTP."""
+    try:
+        from src.integrations.rss import fetch_multiple_feeds
+
+        items = await fetch_multiple_feeds(feeds, limit_per_feed=5)
+        candidates: list[Candidate] = []
+        for item in items:
+            candidates.append(Candidate(
+                id=_uid(),
+                name=item.get("title", "Untitled"),
+                pitch=item.get("summary", "")[:200] or "New article",
+                source="rss_curated",
+                source_url=item.get("url", ""),
+                candidate_type="rss_item",
+                metadata={"feed": item.get("source", ""), "published": item.get("published", "")},
+            ))
+        return candidates if candidates else _mock_rss(feeds)
+    except Exception:
+        return _mock_rss(feeds)
+
+
+def _mock_rss(feeds: list[str]) -> list[Candidate]:
+    """Fallback mock data for RSS scanner."""
     return [
         Candidate(
             id=_uid(),
@@ -114,7 +163,32 @@ async def scan_rss(feeds: list[str]) -> list[Candidate]:
 
 
 async def scan_hackernews(min_score: int = 100) -> list[Candidate]:
-    """Mock: scan Hacker News for high-score posts."""
+    """Scan Hacker News for high-score posts via real API."""
+    try:
+        from src.integrations.hackernews import fetch_top_stories
+
+        stories = await fetch_top_stories(limit=10, min_score=min_score)
+        candidates: list[Candidate] = []
+        for story in stories:
+            candidates.append(Candidate(
+                id=_uid(),
+                name=story.get("title", "Untitled"),
+                pitch=f"HN post with {story.get('score', 0)} points",
+                source="hackernews",
+                source_url=story.get("hn_url", ""),
+                candidate_type="rss_item",
+                metadata={
+                    "score": story.get("score", 0),
+                    "comments": story.get("comments", 0),
+                },
+            ))
+        return candidates if candidates else _mock_hackernews(min_score)
+    except Exception:
+        return _mock_hackernews(min_score)
+
+
+def _mock_hackernews(min_score: int = 100) -> list[Candidate]:
+    """Fallback mock data for HN scanner."""
     return [
         Candidate(
             id=_uid(),

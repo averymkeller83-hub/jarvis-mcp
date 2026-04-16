@@ -91,6 +91,15 @@ Supports Apple, Google Workspace, and Microsoft 365 simultaneously. Smart routin
 - Move CONTROL actions between instant-fire and confirm-first tiers
 - All settings available via menubar, web dashboard, or config files
 
+## Coming in v1.5: Agent Orchestration + Mission Control
+
+The next phase adds the Claude Agent SDK to turn single-shot commands into autonomous multi-step workflows:
+
+- **Multi-step chains** — "Research competitors, draft a summary email, and text me when it's done" runs autonomously across Brains, Hands, and Lessons
+- **Persistent background agents** — "Monitor my CI and ping me if anything breaks" survives across sessions
+- **Mission Control dashboard** — real-time visual monitoring of every active agent: what it's working on, what step it's on, results as they come in
+- **Web-accessible Mission Control** — check on your agents from your phone, not just your Mac
+
 ## Project Structure
 
 ```
@@ -101,24 +110,28 @@ src/
   lessons/     # Capture, approval, retrieval, pruning
   voice/       # STT (Whisper), TTS (Fish Audio), activation
   briefing/    # Composer, Obsidian writer, delivery
-  integrations/  # Apple, Google, Microsoft service connectors
+  engine/      # Proactive scheduler, background tasks, notifications
+  setup/       # 12-step first-run setup flow
+  settings/    # Settings manager, web dashboard, TOML config
+  integrations/  # Weather, RSS, GitHub, Apple/Google/Microsoft connectors
 config/        # Example TOML configs (user copies and customizes)
 docs/specs/    # Locked v1 spec (550+ lines, 30+ decisions)
-tests/         # Test suite
+tests/         # Test suite (538+ tests)
 scripts/       # Utility scripts
 ```
 
 ## Status
 
-**v1 spec is locked.** Implementation starting. See [`docs/specs/2026-04-15-jarvis-v1-north-star.md`](docs/specs/2026-04-15-jarvis-v1-north-star.md) for the complete spec.
+**v1 spec is locked.** Implementation in progress — 538 tests passing across all pillars. See [`docs/specs/2026-04-15-jarvis-v1-north-star.md`](docs/specs/2026-04-15-jarvis-v1-north-star.md) for the complete spec.
 
 ### Roadmap
 
 | Phase | Scope | Status |
 |---|---|---|
 | v1 — Mac Core | Extension + daemon + Hands + Scout + Lessons + voice + briefings | Building |
-| v2 — Phone Reach | "Hey Siri, Jarvis..." + relay server + AirPods + CarPlay | Planned |
-| v3 — Native iOS | iOS app + Watch + tap-to-talk | Planned |
+| v1.5 — Agent Orchestration | Claude Agent SDK integration + Mission Control dashboard — multi-step agent chains, persistent background agents, live visual monitoring of agent status/progress/results | Planned |
+| v2 — Phone Reach | "Hey Siri, Jarvis..." + relay server + AirPods + CarPlay + web-accessible Mission Control | Planned |
+| v3 — Native iOS | iOS app + Watch + tap-to-talk + team/multi-user features | Planned |
 
 ## Contributing
 

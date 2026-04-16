@@ -16,6 +16,8 @@ from pydantic import BaseModel
 from src.brain.router import classify, control_intent, local_intent
 from src.briefing.composer import compose_briefing
 from src.briefing.writer import write_to_obsidian
+from src.engine.scheduler import ProactiveEngine
+from src.engine.tasks import register_default_tasks
 from src.hands.executor import execute_control
 from src.scout.cards import card_to_dict
 from src.scout.engine import install_candidate, run_discovery
@@ -50,13 +52,17 @@ VERSION = "0.1.0"
 _start_time: float = 0.0
 _setup_state: SetupState | None = None
 _voice_activation = VoiceActivation(ActivationConfig())
+_engine = ProactiveEngine()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _start_time
     _start_time = time.monotonic()
+    register_default_tasks(_engine)
+    await _engine.start()
     yield
+    await _engine.stop()
 
 
 app = FastAPI(title="Jarvis MCP Core Daemon", version=VERSION, lifespan=lifespan)
@@ -139,6 +145,7 @@ async def status() -> dict[str, Any]:
             "settings": "available",
             "voice": "available",
             "setup": "available",
+            "engine": "available",
         },
     }
 
@@ -309,6 +316,39 @@ async def settings_update_key(
     if not ok:
         return {"success": False, "error": f"Unknown section: {section_name}"}
     return {"success": True, "section": section_name, "key": key}
+
+
+# ── Engine endpoints ────────────────────────────────────────────────
+
+@app.get("/engine/schedule")
+async def engine_schedule() -> dict[str, Any]:
+    return {"tasks": _engine.get_schedule()}
+
+
+@app.post("/engine/run/{task_name}")
+async def engine_run_task(task_name: str) -> dict[str, Any]:
+    result = await _engine.run_task(task_name)
+    return result
+
+
+@app.get("/engine/status")
+async def engine_status() -> dict[str, Any]:
+    return {
+        "running": _engine.running,
+        "task_count": len(_engine.get_schedule()),
+    }
+
+
+@app.post("/engine/start")
+async def engine_start() -> dict[str, str]:
+    await _engine.start()
+    return {"status": "started"}
+
+
+@app.post("/engine/stop")
+async def engine_stop() -> dict[str, str]:
+    await _engine.stop()
+    return {"status": "stopped"}
 
 
 # ── Voice endpoints ─────────────────────────────────────────────────
