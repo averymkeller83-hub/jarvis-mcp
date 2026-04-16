@@ -16,7 +16,7 @@ from src.setup.steps import (
 
 
 async def start_setup() -> SetupState:
-    """Create a fresh setup state with all 12 steps."""
+    """Create a fresh setup state with all 13 steps."""
     steps = create_setup_steps()
     return SetupState(
         steps=steps,

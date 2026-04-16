@@ -38,7 +38,8 @@ def test_load_all_settings_returns_all_sections():
     result = manager.load_all_settings()
     expected_keys = {
         "personality", "voice", "behavior", "scout_sources",
-        "contacts", "control_tiers", "briefing", "notifications", "privacy",
+        "contacts", "control_tiers", "briefing", "notifications",
+        "communication", "privacy",
     }
     assert expected_keys == set(result.keys())
 

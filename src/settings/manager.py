@@ -73,6 +73,13 @@ DEFAULT_BRIEFING: dict[str, Any] = {
     },
 }
 
+DEFAULT_COMMUNICATION: dict[str, Any] = {
+    "channels": {
+        "primary": "macos_notifications",
+        "enabled": ["macos_notifications"],
+    },
+}
+
 DEFAULT_PRIVACY: dict[str, Any] = {
     "telemetry_enabled": False,
     "local_only": True,
@@ -154,6 +161,14 @@ def save_briefing(data: dict[str, Any]) -> bool:
     return _write_toml("briefing", data)
 
 
+def load_communication() -> dict[str, Any]:
+    return _read_toml("communication", DEFAULT_COMMUNICATION)
+
+
+def save_communication(data: dict[str, Any]) -> bool:
+    return _write_toml("communication", data)
+
+
 def load_privacy() -> dict[str, Any]:
     return _read_toml("privacy", DEFAULT_PRIVACY)
 
@@ -173,6 +188,7 @@ _SECTION_MAP: dict[str, tuple[Any, Any]] = {
     "control_tiers": (load_control_tiers, save_control_tiers),
     "briefing": (load_briefing, save_briefing),
     "notifications": (load_notifications, save_notifications),
+    "communication": (load_communication, save_communication),
     "privacy": (load_privacy, save_privacy),
 }
 
@@ -191,6 +207,7 @@ def load_all_settings() -> dict[str, Any]:
         "control_tiers": load_control_tiers(),
         "briefing": load_briefing(),
         "notifications": load_notifications(),
+        "communication": load_communication(),
         "privacy": load_privacy(),
     }
 

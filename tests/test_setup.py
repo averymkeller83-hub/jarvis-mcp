@@ -8,6 +8,7 @@ from httpx import ASGITransport
 from unittest.mock import AsyncMock, patch
 
 from src.setup.steps import (
+    SUPPORTED_CHANNELS,
     SetupState,
     SetupStep,
     advance,
@@ -21,6 +22,7 @@ from src.setup.handlers import (
     handle_briefing_prefs,
     handle_claude_connection,
     handle_colima_check,
+    handle_communication,
     handle_contacts,
     handle_done,
     handle_first_scan,
@@ -63,25 +65,25 @@ def client():
 # ── Step definitions ──────────────────────────────────────────────────
 
 
-def test_create_setup_steps_returns_12(steps):
-    assert len(steps) == 12
+def test_create_setup_steps_returns_13(steps):
+    assert len(steps) == 13
 
 
-def test_steps_1_and_3_are_required(steps):
+def test_steps_1_and_4_are_required(steps):
     required = [s for s in steps if s.required]
     assert len(required) == 2
     assert required[0].number == 1
-    assert required[1].number == 3
+    assert required[1].number == 4
 
 
 def test_optional_steps_count(steps):
     optional = [s for s in steps if not s.required]
-    assert len(optional) == 10
+    assert len(optional) == 11
 
 
 def test_step_numbers_sequential(steps):
     numbers = [s.number for s in steps]
-    assert numbers == list(range(1, 13))
+    assert numbers == list(range(1, 14))
 
 
 def test_step_names_are_strings(steps):
@@ -113,7 +115,7 @@ def test_advance_moves_to_next(state):
 def test_advance_stops_at_end(state):
     for _ in range(20):
         state = advance(state)
-    assert state.current_step == 12
+    assert state.current_step == 13
 
 
 def test_skip_step_optional(state):
@@ -127,9 +129,9 @@ def test_skip_step_fails_for_required_step_1(state):
         skip_step(state, 1)
 
 
-def test_skip_step_fails_for_required_step_3(state):
+def test_skip_step_fails_for_required_step_4(state):
     with pytest.raises(ValueError, match="required"):
-        skip_step(state, 3)
+        skip_step(state, 4)
 
 
 def test_skip_step_fails_for_invalid_number(state):
@@ -146,8 +148,8 @@ def test_complete_step_marks_done(state):
 
 
 def test_complete_step_with_no_result(state):
-    state = complete_step(state, 5)
-    step = get_step(state, 5)
+    state = complete_step(state, 6)
+    step = get_step(state, 6)
     assert step.completed is True
     assert step.result is None
 
@@ -155,6 +157,15 @@ def test_complete_step_with_no_result(state):
 def test_complete_step_fails_for_invalid(state):
     with pytest.raises(ValueError, match="does not exist"):
         complete_step(state, 99)
+
+
+def test_supported_channels_list():
+    assert "imessage" in SUPPORTED_CHANNELS
+    assert "telegram" in SUPPORTED_CHANNELS
+    assert "discord" in SUPPORTED_CHANNELS
+    assert "slack" in SUPPORTED_CHANNELS
+    assert "email" in SUPPORTED_CHANNELS
+    assert "macos_notifications" in SUPPORTED_CHANNELS
 
 
 # ── Handlers ──────────────────────────────────────────────────────────
@@ -187,11 +198,46 @@ async def test_handle_personalization(state, tmp_path, monkeypatch):
     assert personality.exists()
 
 
+async def test_handle_communication_defaults(state, tmp_path, monkeypatch):
+    monkeypatch.setattr("src.setup.handlers.CONFIG_DIR", tmp_path)
+    state, result = await handle_communication(state, {})
+    assert result["primary"] == "macos_notifications"
+    assert result["enabled"] == ["macos_notifications"]
+    assert "available" in result
+    step = get_step(state, 3)
+    assert step.completed is True
+    assert (tmp_path / "communication.toml").exists()
+
+
+async def test_handle_communication_multiple_channels(state, tmp_path, monkeypatch):
+    monkeypatch.setattr("src.setup.handlers.CONFIG_DIR", tmp_path)
+    config = {"channels": ["imessage", "telegram"], "primary": "telegram"}
+    state, result = await handle_communication(state, config)
+    assert result["primary"] == "telegram"
+    assert result["enabled"] == ["imessage", "telegram"]
+    assert "telegram" in result["message"]
+
+
+async def test_handle_communication_invalid_channels(state, tmp_path, monkeypatch):
+    monkeypatch.setattr("src.setup.handlers.CONFIG_DIR", tmp_path)
+    config = {"channels": ["carrier_pigeon", "smoke_signal"]}
+    state, result = await handle_communication(state, config)
+    assert result["primary"] == "macos_notifications"
+    assert result["enabled"] == ["macos_notifications"]
+
+
+async def test_handle_communication_invalid_primary(state, tmp_path, monkeypatch):
+    monkeypatch.setattr("src.setup.handlers.CONFIG_DIR", tmp_path)
+    config = {"channels": ["imessage", "telegram"], "primary": "discord"}
+    state, result = await handle_communication(state, config)
+    assert result["primary"] == "imessage"  # falls back to first valid
+
+
 async def test_handle_claude_connection(state):
     state, result = await handle_claude_connection(state, {})
     assert result["detected"] is True
     assert result["tier"] == "pro"
-    step = get_step(state, 3)
+    step = get_step(state, 4)
     assert step.completed is True
 
 
@@ -200,7 +246,7 @@ async def test_handle_contacts(state, tmp_path, monkeypatch):
     config = {"nicknames": {"mom": "Jane Keller", "bro": "Mike Keller"}}
     state, result = await handle_contacts(state, config)
     assert result["nickname_count"] == 2
-    step = get_step(state, 4)
+    step = get_step(state, 5)
     assert step.completed is True
     assert (tmp_path / "contacts_nicknames.toml").exists()
 
@@ -210,7 +256,7 @@ async def test_handle_services_multiple(state):
     state, result = await handle_services(state, config)
     assert result["count"] == 3
     assert "google" in result["services"]
-    step = get_step(state, 5)
+    step = get_step(state, 6)
     assert step.completed is True
 
 
@@ -234,7 +280,7 @@ async def test_handle_scout_sources(state, tmp_path, monkeypatch):
     config = {"sources": ["anthropic_changelog", "mcp_registry"]}
     state, result = await handle_scout_sources(state, config)
     assert result["count"] == 2
-    step = get_step(state, 6)
+    step = get_step(state, 7)
     assert step.completed is True
 
 
@@ -242,7 +288,7 @@ async def test_handle_github_auth(state):
     state, result = await handle_github_auth(state, {})
     assert result["gh_found"] is True
     assert result["authenticated"] is True
-    step = get_step(state, 7)
+    step = get_step(state, 8)
     assert step.completed is True
 
 
@@ -251,7 +297,7 @@ async def test_handle_colima_check(state):
     assert result["docker_found"] is False
     assert result["colima_found"] is False
     assert result["offer_install"] is True
-    step = get_step(state, 8)
+    step = get_step(state, 9)
     assert step.completed is True
 
 
@@ -260,7 +306,7 @@ async def test_handle_briefing_prefs(state):
     state, result = await handle_briefing_prefs(state, config)
     assert result["briefing_time"] == "08:00"
     assert result["obsidian_vault"] == "/Users/test/vault"
-    step = get_step(state, 9)
+    step = get_step(state, 10)
     assert step.completed is True
 
 
@@ -274,7 +320,7 @@ async def test_handle_voice_setup(state):
     state, result = await handle_voice_setup(state, {})
     assert result["mic_detected"] is True
     assert result["tts_working"] is True
-    step = get_step(state, 10)
+    step = get_step(state, 11)
     assert step.completed is True
 
 
@@ -284,14 +330,14 @@ async def test_handle_first_scan(state):
         state, result = await handle_first_scan(state, {})
         assert result["scan_count"] == 0
         mock_disc.assert_awaited_once()
-    step = get_step(state, 11)
+    step = get_step(state, 12)
     assert step.completed is True
 
 
 async def test_handle_done_default_name(state):
     state, result = await handle_done(state, {})
     assert "Sir" in result["message"]
-    step = get_step(state, 12)
+    step = get_step(state, 13)
     assert step.completed is True
 
 
@@ -303,9 +349,9 @@ async def test_handle_done_personalised(state):
     assert result["user_name"] == "Avery"
 
 
-def test_step_handlers_dict_has_all_12():
-    assert len(STEP_HANDLERS) == 12
-    for i in range(1, 13):
+def test_step_handlers_dict_has_all_13():
+    assert len(STEP_HANDLERS) == 13
+    for i in range(1, 14):
         assert i in STEP_HANDLERS
 
 
@@ -314,7 +360,7 @@ def test_step_handlers_dict_has_all_12():
 
 async def test_start_setup():
     state = await start_setup()
-    assert len(state.steps) == 12
+    assert len(state.steps) == 13
     assert state.current_step == 1
     assert state.started_at != ""
 
@@ -358,7 +404,7 @@ def test_is_setup_complete_true_when_required_done():
 
     state = SetupState(steps=create_setup_steps(), started_at="t")
     complete_step(state, 1, {"done": True})
-    complete_step(state, 3, {"done": True})
+    complete_step(state, 4, {"done": True})
     assert is_setup_complete(state) is True
 
 
@@ -367,10 +413,10 @@ def test_get_setup_progress_initial():
 
     state = SetupState(steps=create_setup_steps(), started_at="t")
     prog = get_setup_progress(state)
-    assert prog["total"] == 12
+    assert prog["total"] == 13
     assert prog["completed"] == 0
     assert prog["skipped"] == 0
-    assert prog["remaining"] == 12
+    assert prog["remaining"] == 13
     assert prog["percent"] == 0
 
 
@@ -380,12 +426,12 @@ def test_get_setup_progress_partial():
     state = SetupState(steps=create_setup_steps(), started_at="t")
     complete_step(state, 1)
     complete_step(state, 2)
-    skip_step(state, 4)
+    skip_step(state, 5)
     prog = get_setup_progress(state)
     assert prog["completed"] == 2
     assert prog["skipped"] == 1
-    assert prog["remaining"] == 9
-    assert prog["percent"] == 17  # round(2/12 * 100) = 17
+    assert prog["remaining"] == 10
+    assert prog["percent"] == 15  # round(2/13 * 100) = 15
 
 
 # ── Server endpoints ─────────────────────────────────────────────────
@@ -396,7 +442,7 @@ async def test_setup_start_endpoint(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "started"
-    assert data["total_steps"] == 12
+    assert data["total_steps"] == 13
     assert data["current_step"] == 1
 
 
@@ -445,7 +491,7 @@ async def test_setup_progress_endpoint(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["completed"] == 1
-    assert data["total"] == 12
+    assert data["total"] == 13
 
 
 async def test_setup_progress_without_start(client):
@@ -469,7 +515,7 @@ async def test_status_includes_setup(client):
 
 
 async def test_full_setup_walkthrough(client, tmp_path, monkeypatch):
-    """Walk through all 12 steps end-to-end."""
+    """Walk through all 13 steps end-to-end."""
     monkeypatch.setattr("src.setup.handlers.CONFIG_DIR", tmp_path)
 
     # Start
@@ -487,58 +533,65 @@ async def test_full_setup_walkthrough(client, tmp_path, monkeypatch):
     )
     assert resp.json()["result"]["user_name"] == "Avery"
 
-    # Step 3 — claude connection
-    resp = await client.post("/setup/step/3", json={"config": {}})
+    # Step 3 — communication
+    resp = await client.post(
+        "/setup/step/3",
+        json={"config": {"channels": ["imessage", "telegram"], "primary": "telegram"}},
+    )
+    assert resp.json()["result"]["primary"] == "telegram"
+
+    # Step 4 — claude connection
+    resp = await client.post("/setup/step/4", json={"config": {}})
     assert resp.json()["result"]["detected"] is True
 
-    # Step 4 — contacts
+    # Step 5 — contacts
     resp = await client.post(
-        "/setup/step/4",
+        "/setup/step/5",
         json={"config": {"nicknames": {"mom": "Jane"}}},
     )
     assert resp.json()["result"]["nickname_count"] == 1
 
-    # Step 5 — services
+    # Step 6 — services
     resp = await client.post(
-        "/setup/step/5",
+        "/setup/step/6",
         json={"config": {"services": ["apple", "google"]}},
     )
     assert resp.json()["result"]["count"] == 2
 
-    # Step 6 — scout sources (skip — no example file in tmp_path)
+    # Step 7 — scout sources (skip — no example file in tmp_path)
     resp = await client.post(
-        "/setup/step/6",
+        "/setup/step/7",
         json={"config": {"sources": []}},
     )
-    assert resp.json()["step"] == 6
+    assert resp.json()["step"] == 7
 
-    # Step 7 — github
-    resp = await client.post("/setup/step/7", json={"config": {}})
+    # Step 8 — github
+    resp = await client.post("/setup/step/8", json={"config": {}})
     assert resp.json()["result"]["gh_found"] is True
 
-    # Step 8 — colima
-    resp = await client.post("/setup/step/8", json={"config": {}})
+    # Step 9 — colima
+    resp = await client.post("/setup/step/9", json={"config": {}})
     assert resp.json()["result"]["docker_found"] is False
 
-    # Step 9 — briefing prefs
+    # Step 10 — briefing prefs
     resp = await client.post(
-        "/setup/step/9",
+        "/setup/step/10",
         json={"config": {"briefing_time": "07:00"}},
     )
     assert resp.json()["result"]["briefing_time"] == "07:00"
 
-    # Step 10 — voice
-    resp = await client.post("/setup/step/10", json={"config": {}})
+    # Step 11 — voice
+    resp = await client.post("/setup/step/11", json={"config": {}})
     assert resp.json()["result"]["mic_detected"] is True
 
-    # Step 11 — first scan (mock discovery)
+    # Step 12 — first scan (mock discovery)
     with patch("src.scout.engine.run_discovery", new_callable=AsyncMock) as mock_d:
         mock_d.return_value = []
-        resp = await client.post("/setup/step/11", json={"config": {}})
+        resp = await client.post("/setup/step/12", json={"config": {}})
         assert resp.json()["result"]["scan_count"] == 0
 
-    # Step 12 — done
-    resp = await client.post("/setup/step/12", json={"config": {}})
+    # Step 13 — done
+    resp = await client.post("/setup/step/13", json={"config": {}})
     data = resp.json()
     assert "Avery" in data["result"]["message"]
     assert data["complete"] is True
@@ -546,5 +599,5 @@ async def test_full_setup_walkthrough(client, tmp_path, monkeypatch):
     # Verify progress
     resp = await client.get("/setup/progress")
     prog = resp.json()
-    assert prog["completed"] == 12
+    assert prog["completed"] == 13
     assert prog["percent"] == 100

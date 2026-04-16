@@ -6,7 +6,7 @@ from pathlib import Path
 
 import toml
 
-from src.setup.steps import SetupState, complete_step
+from src.setup.steps import SUPPORTED_CHANNELS, SetupState, complete_step
 
 CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
 
@@ -46,21 +46,62 @@ async def handle_personalization(
     return state, result
 
 
-async def handle_claude_connection(
+async def handle_communication(
     state: SetupState, config: dict
 ) -> tuple[SetupState, dict]:
-    """Step 3 — Detect Claude Desktop (mocked)."""
+    """Step 3 — Choose preferred communication channels.
+
+    Accepts:
+        channels: list of channel names (e.g. ["imessage", "telegram"])
+        primary: the main channel for important notifications
+    """
+    channels = config.get("channels", ["macos_notifications"])
+    primary = config.get("primary", channels[0] if channels else "macos_notifications")
+
+    # Validate channels
+    valid = [c for c in channels if c in SUPPORTED_CHANNELS]
+    if not valid:
+        valid = ["macos_notifications"]
+    if primary not in valid:
+        primary = valid[0]
+
+    # Save to config/communication.toml
+    comm_path = CONFIG_DIR / "communication.toml"
+    comm_path.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "channels": {
+            "primary": primary,
+            "enabled": valid,
+        },
+    }
+    with open(comm_path, "w") as f:
+        toml.dump(data, f)
+
     result = {
-        "detected": True,
-        "tier": "pro",
-        "message": "Claude Desktop detected — Pro subscription active.",
+        "primary": primary,
+        "enabled": valid,
+        "available": SUPPORTED_CHANNELS,
+        "message": f"I'll reach you via {primary}. {len(valid)} channel(s) enabled.",
     }
     state = complete_step(state, 3, result)
     return state, result
 
 
+async def handle_claude_connection(
+    state: SetupState, config: dict
+) -> tuple[SetupState, dict]:
+    """Step 4 — Detect Claude Desktop (mocked)."""
+    result = {
+        "detected": True,
+        "tier": "pro",
+        "message": "Claude Desktop detected — Pro subscription active.",
+    }
+    state = complete_step(state, 4, result)
+    return state, result
+
+
 async def handle_contacts(state: SetupState, config: dict) -> tuple[SetupState, dict]:
-    """Step 4 — Store contact nickname mappings."""
+    """Step 5 — Store contact nickname mappings."""
     nicknames = config.get("nicknames", {})
 
     nicknames_path = CONFIG_DIR / "contacts_nicknames.toml"
@@ -69,22 +110,22 @@ async def handle_contacts(state: SetupState, config: dict) -> tuple[SetupState, 
         toml.dump({"nicknames": nicknames}, f)
 
     result = {"nickname_count": len(nicknames), "nicknames": nicknames}
-    state = complete_step(state, 4, result)
+    state = complete_step(state, 5, result)
     return state, result
 
 
 async def handle_services(state: SetupState, config: dict) -> tuple[SetupState, dict]:
-    """Step 5 — Select service ecosystems."""
+    """Step 6 — Select service ecosystems."""
     services = config.get("services", ["apple"])
     result = {"services": services, "count": len(services)}
-    state = complete_step(state, 5, result)
+    state = complete_step(state, 6, result)
     return state, result
 
 
 async def handle_scout_sources(
     state: SetupState, config: dict
 ) -> tuple[SetupState, dict]:
-    """Step 6 — Enable selected Scout sources."""
+    """Step 7 — Enable selected Scout sources."""
     sources_to_enable = config.get("sources", [])
 
     sources_path = CONFIG_DIR / "scout_sources.toml"
@@ -111,41 +152,41 @@ async def handle_scout_sources(
         toml.dump(data, f)
 
     result = {"enabled": sources_to_enable, "count": enabled_count}
-    state = complete_step(state, 6, result)
+    state = complete_step(state, 7, result)
     return state, result
 
 
 async def handle_github_auth(
     state: SetupState, config: dict
 ) -> tuple[SetupState, dict]:
-    """Step 7 — Check for gh CLI (mocked)."""
+    """Step 8 — Check for gh CLI (mocked)."""
     result = {
         "gh_found": True,
         "authenticated": True,
         "message": "GitHub CLI detected and authenticated.",
     }
-    state = complete_step(state, 7, result)
+    state = complete_step(state, 8, result)
     return state, result
 
 
 async def handle_colima_check(
     state: SetupState, config: dict
 ) -> tuple[SetupState, dict]:
-    """Step 8 — Check for Docker/Colima (mocked — not found)."""
+    """Step 9 — Check for Docker/Colima (mocked — not found)."""
     result = {
         "docker_found": False,
         "colima_found": False,
         "offer_install": True,
         "message": "Docker/Colima not found. Install recommended for sandbox testing.",
     }
-    state = complete_step(state, 8, result)
+    state = complete_step(state, 9, result)
     return state, result
 
 
 async def handle_briefing_prefs(
     state: SetupState, config: dict
 ) -> tuple[SetupState, dict]:
-    """Step 9 — Set briefing time and Obsidian vault path."""
+    """Step 10 — Set briefing time and Obsidian vault path."""
     briefing_time = config.get("briefing_time", "07:30")
     obsidian_vault = config.get("obsidian_vault", None)
 
@@ -154,38 +195,38 @@ async def handle_briefing_prefs(
         "obsidian_vault": obsidian_vault,
         "message": f"Briefing scheduled for {briefing_time}.",
     }
-    state = complete_step(state, 9, result)
+    state = complete_step(state, 10, result)
     return state, result
 
 
 async def handle_voice_setup(
     state: SetupState, config: dict
 ) -> tuple[SetupState, dict]:
-    """Step 10 — Test mic and TTS (mocked)."""
+    """Step 11 — Test mic and TTS (mocked)."""
     result = {
         "mic_detected": True,
         "tts_working": True,
         "voice_profile": "default",
         "message": "Microphone detected. TTS engine ready.",
     }
-    state = complete_step(state, 10, result)
+    state = complete_step(state, 11, result)
     return state, result
 
 
 async def handle_first_scan(
     state: SetupState, config: dict
 ) -> tuple[SetupState, dict]:
-    """Step 11 — Run Scout discovery immediately."""
+    """Step 12 — Run Scout discovery immediately."""
     from src.scout.engine import run_discovery
 
     cards = await run_discovery()
     result = {"scan_count": len(cards), "message": f"Scout found {len(cards)} items."}
-    state = complete_step(state, 11, result)
+    state = complete_step(state, 12, result)
     return state, result
 
 
 async def handle_done(state: SetupState, config: dict) -> tuple[SetupState, dict]:
-    """Step 12 — Completion message using user's name."""
+    """Step 13 — Completion message using user's name."""
     # Pull user name from step 2 result, or fall back to config / default
     from src.setup.steps import get_step
 
@@ -198,21 +239,22 @@ async def handle_done(state: SetupState, config: dict) -> tuple[SetupState, dict
 
     message = f"Ready when you are, {user_name}."
     result = {"message": message, "user_name": user_name}
-    state = complete_step(state, 12, result)
+    state = complete_step(state, 13, result)
     return state, result
 
 
 STEP_HANDLERS: dict[int, callable] = {
     1: handle_welcome,
     2: handle_personalization,
-    3: handle_claude_connection,
-    4: handle_contacts,
-    5: handle_services,
-    6: handle_scout_sources,
-    7: handle_github_auth,
-    8: handle_colima_check,
-    9: handle_briefing_prefs,
-    10: handle_voice_setup,
-    11: handle_first_scan,
-    12: handle_done,
+    3: handle_communication,
+    4: handle_claude_connection,
+    5: handle_contacts,
+    6: handle_services,
+    7: handle_scout_sources,
+    8: handle_github_auth,
+    9: handle_colima_check,
+    10: handle_briefing_prefs,
+    11: handle_voice_setup,
+    12: handle_first_scan,
+    13: handle_done,
 }
