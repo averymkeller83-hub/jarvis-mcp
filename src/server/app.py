@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
@@ -11,6 +12,8 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.responses import FileResponse
 from pydantic import BaseModel
 
 from src.brain.router import classify, control_intent, local_intent
@@ -87,8 +90,12 @@ app = FastAPI(title="Jarvis MCP Core Daemon", version=VERSION, lifespan=lifespan
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1", "http://127.0.0.1:*"],
-    allow_origin_regex=r"^http://127\.0\.0\.1(:\d+)?$",
+    allow_origins=[
+        "http://127.0.0.1",
+        "http://127.0.0.1:*",
+        "http://localhost:5173",
+    ],
+    allow_origin_regex=r"^http://(127\.0\.0\.1|localhost)(:\d+)?$",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -689,3 +696,20 @@ api_router.add_api_route("/setup/skip/{step_number}", setup_skip, methods=["POST
 api_router.add_api_route("/setup/progress", setup_progress, methods=["GET"])
 
 app.include_router(api_router)
+
+
+# ── Static file serving (SPA) ──────────────────────────────────────
+
+_DASHBOARD_DIR = Path(__file__).resolve().parent.parent.parent / "dashboard" / "dist"
+
+if _DASHBOARD_DIR.is_dir():
+    if (_DASHBOARD_DIR / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=_DASHBOARD_DIR / "assets"), name="assets")
+
+    @app.get("/{path:path}")
+    async def spa_fallback(path: str):
+        """Serve static files or fall back to index.html for SPA routing."""
+        file_path = _DASHBOARD_DIR / path
+        if file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(_DASHBOARD_DIR / "index.html")
