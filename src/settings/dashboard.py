@@ -133,6 +133,14 @@ _TEMPLATE = r"""<!DOCTYPE html>
   <button class="btn btn-primary" onclick="saveSection('control_tiers')">Save Tiers</button>
 </div>
 
+<!-- News Sources -->
+<div class="card" id="sec-news">
+  <div class="section-title">News Sources</div>
+  <p class="text-sm text-slate-400 mb-3">Pick which headlines show up in your briefing.</p>
+  <div id="news-sources" class="space-y-1 mb-4" style="max-height:300px;overflow-y:auto"></div>
+  <button class="btn btn-primary" onclick="saveNewsSources()">Save News Sources</button>
+</div>
+
 <!-- Briefing -->
 <div class="card" id="sec-briefing">
   <div class="section-title">Briefing Preferences</div>
@@ -231,6 +239,35 @@ document.getElementById('br-tz').value=S.briefing?.timezone||'';
   }
 })();
 
+// News sources — fetch catalog from API, build checkboxes
+(function(){
+  var container=document.getElementById('news-sources');
+  var enabledIds=S.news_sources?.enabled||['hackernews'];
+  var catLabels={'general':'General','tech':'Tech','business':'Business','science':'Science','sports':'Sports','world':'World'};
+  fetch('/news/catalog').then(function(r){return r.json()}).then(function(d){
+    var byCategory={};
+    (d.sources||[]).forEach(function(s){
+      if(!byCategory[s.category])byCategory[s.category]=[];
+      byCategory[s.category].push(s);
+    });
+    Object.keys(byCategory).sort().forEach(function(cat){
+      var hdr=document.createElement('div');hdr.className='text-xs text-slate-500 uppercase tracking-wide mt-2 mb-1';
+      hdr.textContent=catLabels[cat]||cat;container.appendChild(hdr);
+      byCategory[cat].forEach(function(src){
+        var row=document.createElement('div');row.className='flex items-center gap-2';
+        var cb=document.createElement('input');cb.type='checkbox';
+        cb.setAttribute('data-news-id',src.id);
+        if(enabledIds.indexOf(src.id)!==-1)cb.checked=true;
+        var lbl=document.createElement('span');lbl.className='text-sm text-slate-300';
+        lbl.textContent=src.name;
+        row.appendChild(cb);row.appendChild(lbl);container.appendChild(row);
+      });
+    });
+  }).catch(function(){
+    container.textContent='Could not load news catalog.';
+  });
+})();
+
 // Scout sources — safe DOM construction
 (function(){
   var sl=document.getElementById('scout-list');
@@ -309,6 +346,16 @@ async function saveSection(section){
   else if(section==='privacy')body={telemetry_enabled:isOn(document.getElementById('pr-tele')),
     local_only:isOn(document.getElementById('pr-local')),auto_delete_logs_days:30};
   var r=await fetch('/settings/'+section,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(r.ok)toast();else toast('Error saving');
+}
+
+async function saveNewsSources(){
+  var enabled=[];
+  document.querySelectorAll('[data-news-id]').forEach(function(cb){
+    if(cb.checked)enabled.push(cb.getAttribute('data-news-id'));
+  });
+  var body={enabled:enabled,hn_limit:5,hn_min_score:100,rss_limit_per_feed:5};
+  var r=await fetch('/news/sources',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(r.ok)toast();else toast('Error saving');
 }
 

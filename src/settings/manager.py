@@ -73,6 +73,13 @@ DEFAULT_BRIEFING: dict[str, Any] = {
     },
 }
 
+DEFAULT_NEWS_SOURCES: dict[str, Any] = {
+    "enabled": ["hackernews"],
+    "hn_limit": 5,
+    "hn_min_score": 100,
+    "rss_limit_per_feed": 5,
+}
+
 DEFAULT_COMMUNICATION: dict[str, Any] = {
     "channels": {
         "primary": "macos_notifications",
@@ -161,6 +168,14 @@ def save_briefing(data: dict[str, Any]) -> bool:
     return _write_toml("briefing", data)
 
 
+def load_news_sources() -> dict[str, Any]:
+    return _read_toml("news_sources", DEFAULT_NEWS_SOURCES)
+
+
+def save_news_sources(data: dict[str, Any]) -> bool:
+    return _write_toml("news_sources", data)
+
+
 def load_communication() -> dict[str, Any]:
     return _read_toml("communication", DEFAULT_COMMUNICATION)
 
@@ -188,6 +203,7 @@ _SECTION_MAP: dict[str, tuple[Any, Any]] = {
     "control_tiers": (load_control_tiers, save_control_tiers),
     "briefing": (load_briefing, save_briefing),
     "notifications": (load_notifications, save_notifications),
+    "news_sources": (load_news_sources, save_news_sources),
     "communication": (load_communication, save_communication),
     "privacy": (load_privacy, save_privacy),
 }
@@ -207,6 +223,7 @@ def load_all_settings() -> dict[str, Any]:
         "control_tiers": load_control_tiers(),
         "briefing": load_briefing(),
         "notifications": load_notifications(),
+        "news_sources": load_news_sources(),
         "communication": load_communication(),
         "privacy": load_privacy(),
     }

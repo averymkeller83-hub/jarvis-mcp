@@ -24,12 +24,15 @@ from src.scout.engine import install_candidate, run_discovery
 from src.scout.signals import Signal, log_signal
 from src.scout.sources import load_sources
 from src.settings.dashboard import render_dashboard
+from src.briefing.news_sources import get_catalog, get_rss_urls_for_enabled
 from src.settings.manager import (
     export_all_data,
     load_all_settings,
     load_control_tiers,
+    load_news_sources,
     load_notifications,
     save_control_tiers,
+    save_news_sources,
     save_notifications,
     save_section,
     save_setting,
@@ -187,7 +190,17 @@ async def control_confirm(body: ControlExecuteRequest) -> dict[str, Any]:
 
 @app.get("/briefing")
 async def briefing() -> dict[str, Any]:
-    result = await compose_briefing()
+    # Read news source config and resolve to RSS URLs + HN flag
+    news_cfg = load_news_sources()
+    enabled = news_cfg.get("enabled", ["hackernews"])
+    rss_urls, hn_enabled = get_rss_urls_for_enabled(enabled)
+
+    result = await compose_briefing({
+        "rss_urls": rss_urls,
+        "hn_enabled": hn_enabled,
+        "hn_limit": news_cfg.get("hn_limit", 5),
+        "hn_min_score": news_cfg.get("hn_min_score", 100),
+    })
     return {
         "sections": [asdict(s) for s in result.sections],
         "generated_at": result.generated_at,
@@ -197,9 +210,36 @@ async def briefing() -> dict[str, Any]:
 
 @app.get("/briefing/obsidian")
 async def briefing_obsidian(vault_path: str = Query(...)) -> dict[str, str]:
-    result = await compose_briefing()
+    news_cfg = load_news_sources()
+    enabled = news_cfg.get("enabled", ["hackernews"])
+    rss_urls, hn_enabled = get_rss_urls_for_enabled(enabled)
+
+    result = await compose_briefing({
+        "rss_urls": rss_urls,
+        "hn_enabled": hn_enabled,
+        "hn_limit": news_cfg.get("hn_limit", 5),
+        "hn_min_score": news_cfg.get("hn_min_score", 100),
+    })
     file_path = write_to_obsidian(result, vault_path)
     return {"file_path": file_path}
+
+
+@app.get("/news/catalog")
+async def news_catalog() -> dict[str, Any]:
+    """Return all available news sources and which ones are enabled."""
+    catalog = get_catalog()
+    cfg = load_news_sources()
+    enabled = cfg.get("enabled", ["hackernews"])
+    for item in catalog:
+        item["enabled"] = item["id"] in enabled
+    return {"sources": catalog, "count": len(catalog)}
+
+
+@app.put("/news/sources")
+async def news_sources_update(body: dict[str, Any]) -> dict[str, Any]:
+    """Update which news sources are enabled."""
+    ok = save_news_sources(body)
+    return {"success": ok}
 
 
 @app.get("/lessons")
