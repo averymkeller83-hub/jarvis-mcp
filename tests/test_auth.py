@@ -261,3 +261,34 @@ async def test_me_authenticated(client: httpx.AsyncClient):
 async def test_me_unauthenticated(client: httpx.AsyncClient):
     resp = await client.get("/api/auth/me")
     assert resp.status_code == 401
+
+
+# ── API Prefix ─────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_api_prefix_status(client: httpx.AsyncClient):
+    resp = await client.get("/api/status")
+    assert resp.status_code == 200
+    assert resp.json()["daemon"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_api_prefix_health(client: httpx.AsyncClient):
+    resp = await client.get("/api/health")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_api_prefix_agents(client: httpx.AsyncClient):
+    resp = await client.get("/api/agents")
+    assert resp.status_code == 200
+    assert "agents" in resp.json()
+
+
+@pytest.mark.asyncio
+async def test_legacy_routes_still_work(client: httpx.AsyncClient):
+    resp = await client.get("/status")
+    assert resp.status_code == 200
+    assert resp.json()["daemon"] == "running"

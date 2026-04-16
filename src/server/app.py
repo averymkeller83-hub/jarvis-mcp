@@ -8,7 +8,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import FastAPI, Query
+from fastapi import APIRouter, FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -623,3 +623,57 @@ async def setup_progress() -> dict[str, Any]:
     if _setup_state is None:
         return {"error": "Setup not started. Call POST /setup/start first."}
     return get_setup_progress(_setup_state)
+
+
+# ── API-prefixed routes (mirrors of legacy routes) ─────────────────
+
+api_router = APIRouter(prefix="/api")
+
+api_router.add_api_route("/health", health, methods=["GET"])
+api_router.add_api_route("/status", status, methods=["GET"])
+api_router.add_api_route("/route", route, methods=["POST"])
+api_router.add_api_route("/control/execute", control_execute, methods=["POST"])
+api_router.add_api_route("/control/confirm", control_confirm, methods=["POST"])
+api_router.add_api_route("/briefing", briefing, methods=["GET"])
+api_router.add_api_route("/briefing/obsidian", briefing_obsidian, methods=["GET"])
+api_router.add_api_route("/news/catalog", news_catalog, methods=["GET"])
+api_router.add_api_route("/news/sources", news_sources_update, methods=["PUT"])
+api_router.add_api_route("/lessons", lessons_list, methods=["GET"])
+api_router.add_api_route("/lessons/propose", lessons_propose, methods=["POST"])
+api_router.add_api_route("/scout/sources", scout_sources, methods=["GET"])
+api_router.add_api_route("/scout/discover", scout_discover, methods=["POST"])
+api_router.add_api_route("/scout/install", scout_install, methods=["POST"])
+api_router.add_api_route("/scout/dismiss", scout_dismiss, methods=["POST"])
+api_router.add_api_route("/settings", settings, methods=["GET"])
+api_router.add_api_route("/settings/dashboard", settings_dashboard, methods=["GET"])
+api_router.add_api_route("/settings/notifications", settings_notifications_get, methods=["GET"])
+api_router.add_api_route("/settings/notifications", settings_notifications_put, methods=["PUT"])
+api_router.add_api_route("/settings/control-tiers", settings_control_tiers_get, methods=["GET"])
+api_router.add_api_route("/settings/control-tiers", settings_control_tiers_put, methods=["PUT"])
+api_router.add_api_route("/settings/export", settings_export, methods=["POST"])
+api_router.add_api_route("/settings/{section_name}", settings_update_section, methods=["PUT"])
+api_router.add_api_route("/settings/{section_name}/{key}", settings_update_key, methods=["PUT"])
+api_router.add_api_route("/engine/schedule", engine_schedule, methods=["GET"])
+api_router.add_api_route("/engine/run/{task_name}", engine_run_task, methods=["POST"])
+api_router.add_api_route("/engine/status", engine_status, methods=["GET"])
+api_router.add_api_route("/engine/start", engine_start, methods=["POST"])
+api_router.add_api_route("/engine/stop", engine_stop, methods=["POST"])
+api_router.add_api_route("/agents", agents_list, methods=["GET"])
+api_router.add_api_route("/agents/{name}", agents_detail, methods=["GET"])
+api_router.add_api_route("/agents/{name}/run", agents_run, methods=["POST"])
+api_router.add_api_route("/agents/{name}/approve", agents_approve, methods=["PUT"])
+api_router.add_api_route("/agents/{name}/stop", agents_stop, methods=["POST"])
+api_router.add_api_route("/agents/{name}/start", agents_start, methods=["POST"])
+api_router.add_api_route("/agents/{name}/context", agents_context, methods=["GET"])
+api_router.add_api_route("/events", events_list, methods=["GET"])
+api_router.add_api_route("/voice/transcribe", voice_transcribe, methods=["POST"])
+api_router.add_api_route("/voice/synthesize", voice_synthesize, methods=["POST"])
+api_router.add_api_route("/voice/status", voice_status, methods=["GET"])
+api_router.add_api_route("/voice/pipeline", voice_pipeline, methods=["POST"])
+api_router.add_api_route("/voice/cache/generate", voice_cache_generate, methods=["POST"])
+api_router.add_api_route("/setup/start", setup_start, methods=["POST"])
+api_router.add_api_route("/setup/step/{step_number}", setup_step, methods=["POST"])
+api_router.add_api_route("/setup/skip/{step_number}", setup_skip, methods=["POST"])
+api_router.add_api_route("/setup/progress", setup_progress, methods=["GET"])
+
+app.include_router(api_router)
