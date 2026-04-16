@@ -450,6 +450,7 @@ The existing `brain/router.py` classifies every inbound message. v1 adds CONTROL
 | Phase | Scope | Rough timeline |
 |---|---|---|
 | **v1 — Mac Core** | Claude Desktop extension + local daemon + full Hands on Mac + Scout (level B, sandbox-test + one-click install) + Lessons (seeded from legacy) + briefings + voice at the Mac | ~8 weeks |
+| **v1.5 — Agent Orchestration + Mission Control** | Claude Agent SDK integration: multi-step agent chains, persistent background agents, visual Mission Control dashboard showing live agent status/progress/results | +3 weeks |
 | **v2 — Phone Reach** | "Hey Siri, Jarvis…" via Apple Shortcuts + WebSocket relay server + AirPods + CarPlay + push notifications | +6 weeks |
 | **v3 — Native iOS** | Jarvis iOS app + Watch complication + tap-to-talk + foreground wake word | +6 weeks |
 
@@ -492,6 +493,26 @@ Tracked here so they don't sneak back in:
 - Billing, licensing, payment infrastructure — no v1 feature requires it
 - Custom LLM fine-tuning — never, Claude is the model
 - Wake-word-into-empty-air on iPhone — impossible on iOS, do not promise
+- Agent orchestration — v1.5 (see below)
+
+---
+
+## v1.5 Planned: Agent Orchestration + Mission Control
+
+**Agent Orchestration** — powered by the Claude Agent SDK:
+- **Multi-step chains:** "Research X, draft an email about it, text me the summary" → Jarvis spawns an agent that chains REASON → CODE → CONTROL steps autonomously, reporting progress along the way.
+- **Persistent background agents:** "Monitor my CI and ping me if anything breaks" → long-running agent that watches and alerts. Survives across conversation sessions.
+- **Scout agents:** Instead of just scanning sources, Scout spins up an agent that investigates a candidate — reads its docs, tests it, writes a recommendation with evidence.
+- **Agent-to-agent delegation:** the router can dispatch to sub-agents that specialize (research agent, coding agent, ops agent) and report back to the main conversation.
+
+**Mission Control Dashboard** — visual agent monitoring at `127.0.0.1:7900/agents`:
+- **Live status board:** see every active agent, what it's working on, what step it's on, estimated progress.
+- **Activity feed:** real-time log of agent actions — "Agent 'Research' fetched 3 sources", "Agent 'CI Monitor' detected build failure on main".
+- **Results gallery:** completed agent outputs displayed as cards — summaries, diffs, recommendations, findings.
+- **Control panel:** pause, resume, or cancel running agents. Reprioritize the queue.
+- **History:** browse past agent runs, their inputs, outputs, and duration.
+
+**Design principle:** The unified chat stays primary — agents are invisible by default. The dashboard is for power users who want to see under the hood. Think "Activity Monitor for your AI."
 
 ---
 
@@ -546,6 +567,7 @@ Tracked here so they don't sneak back in:
 | 2026-04-15 | Don't replace Siri — use it as wake word on iPhone | iOS prohibits 3rd-party continuous listening; Siri Shortcuts handoff is the pragmatic path |
 | 2026-04-15 | Progressive enhancement: Extension alone works; Core daemon is an optional upgrade | Lowest friction install; clean tier boundaries |
 | 2026-04-15 | Phased ship: Mac Core → Phone Reach → Native iOS | 90% of the magic is at the Mac; phone/iOS are polish phases |
+| 2026-04-15 | Agent orchestration (Claude Agent SDK) + Mission Control dashboard planned for v1.5 | Multi-step chains, background agents, visual monitoring; v1 core must be solid first; dashboard gives TikTok-worthy visuals of agents working |
 
 ---
 

@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from src.brain.router import classify, control_intent, local_intent
@@ -20,10 +21,35 @@ from src.scout.cards import card_to_dict
 from src.scout.engine import install_candidate, run_discovery
 from src.scout.signals import Signal, log_signal
 from src.scout.sources import load_sources
+from src.settings.dashboard import render_dashboard
+from src.settings.manager import (
+    export_all_data,
+    load_all_settings,
+    load_control_tiers,
+    load_notifications,
+    save_control_tiers,
+    save_notifications,
+    save_section,
+    save_setting,
+)
+from src.setup.engine import (
+    execute_step,
+    get_setup_progress,
+    is_setup_complete,
+    skip_setup_step,
+    start_setup,
+)
+from src.setup.steps import SetupState
+from src.voice.activation import ActivationConfig, VoiceActivation
+from src.voice.pipeline import voice_roundtrip
+from src.voice.stt import transcribe
+from src.voice.tts import generate_phrase_cache, synthesize
 
 VERSION = "0.1.0"
 
 _start_time: float = 0.0
+_setup_state: SetupState | None = None
+_voice_activation = VoiceActivation(ActivationConfig())
 
 
 @asynccontextmanager
@@ -74,6 +100,22 @@ class ScoutDismissRequest(BaseModel):
     reason: str | None = None
 
 
+class SetupStepRequest(BaseModel):
+    config: dict = {}
+
+
+class VoiceTranscribeRequest(BaseModel):
+    audio_path: str
+
+
+class VoiceSynthesizeRequest(BaseModel):
+    text: str
+
+
+class VoicePipelineRequest(BaseModel):
+    audio_path: str
+
+
 # ── Endpoints ────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -94,7 +136,9 @@ async def status() -> dict[str, Any]:
             "briefing": "placeholder",
             "lessons": "placeholder",
             "scout": "available",
-            "settings": "placeholder",
+            "settings": "available",
+            "voice": "available",
+            "setup": "available",
         },
     }
 
@@ -210,18 +254,162 @@ async def scout_dismiss(body: ScoutDismissRequest) -> dict[str, str]:
 
 @app.get("/settings")
 async def settings() -> dict[str, Any]:
+    return load_all_settings()
+
+
+@app.get("/settings/dashboard", response_class=HTMLResponse)
+async def settings_dashboard() -> HTMLResponse:
+    all_settings = load_all_settings()
+    html = render_dashboard(all_settings)
+    return HTMLResponse(content=html)
+
+
+@app.get("/settings/notifications")
+async def settings_notifications_get() -> dict[str, Any]:
+    return load_notifications()
+
+
+@app.put("/settings/notifications")
+async def settings_notifications_put(body: dict[str, Any]) -> dict[str, Any]:
+    ok = save_notifications(body)
+    return {"success": ok}
+
+
+@app.get("/settings/control-tiers")
+async def settings_control_tiers_get() -> dict[str, Any]:
+    return load_control_tiers()
+
+
+@app.put("/settings/control-tiers")
+async def settings_control_tiers_put(body: dict[str, Any]) -> dict[str, Any]:
+    ok = save_control_tiers(body)
+    return {"success": ok}
+
+
+@app.post("/settings/export")
+async def settings_export() -> dict[str, str]:
+    path = export_all_data("")
+    return {"path": path}
+
+
+@app.put("/settings/{section_name}")
+async def settings_update_section(section_name: str, body: dict[str, Any]) -> dict[str, Any]:
+    ok = save_section(section_name, body)
+    if not ok:
+        return {"success": False, "error": f"Unknown section: {section_name}"}
+    return {"success": True, "section": section_name}
+
+
+@app.put("/settings/{section_name}/{key}")
+async def settings_update_key(
+    section_name: str, key: str, body: dict[str, Any]
+) -> dict[str, Any]:
+    value = body.get("value")
+    ok = save_setting(section_name, key, value)
+    if not ok:
+        return {"success": False, "error": f"Unknown section: {section_name}"}
+    return {"success": True, "section": section_name, "key": key}
+
+
+# ── Voice endpoints ─────────────────────────────────────────────────
+
+@app.post("/voice/transcribe")
+async def voice_transcribe(body: VoiceTranscribeRequest) -> dict[str, Any]:
+    result = await transcribe(body.audio_path)
     return {
-        "personality": {
-            "assistant_name": "JARVIS",
-            "user_display_name": "Sir",
-        },
-        "voice": {
-            "profile": "default",
-            "wake_word_enabled": False,
-            "hotkey": "alt+space",
-        },
-        "behavior": {
-            "use_claude_for_chat": False,
-            "do_not_disturb": False,
-        },
+        "text": result.text,
+        "confidence": result.confidence,
+        "source": result.source,
+        "duration_ms": result.duration_ms,
     }
+
+
+@app.post("/voice/synthesize")
+async def voice_synthesize(body: VoiceSynthesizeRequest) -> dict[str, Any]:
+    result = await synthesize(body.text)
+    return {
+        "audio_path": result.audio_path,
+        "text": result.text,
+        "source": result.source,
+        "duration_ms": result.duration_ms,
+    }
+
+
+@app.get("/voice/status")
+async def voice_status() -> dict[str, Any]:
+    return _voice_activation.get_status()
+
+
+@app.post("/voice/pipeline")
+async def voice_pipeline(body: VoicePipelineRequest) -> dict[str, Any]:
+    result = await voice_roundtrip(body.audio_path)
+    return {
+        "transcription": {
+            "text": result.transcription.text,
+            "confidence": result.transcription.confidence,
+            "source": result.transcription.source,
+            "duration_ms": result.transcription.duration_ms,
+        },
+        "response_text": result.response_text,
+        "tts": {
+            "audio_path": result.tts.audio_path,
+            "text": result.tts.text,
+            "source": result.tts.source,
+            "duration_ms": result.tts.duration_ms,
+        } if result.tts else None,
+        "total_ms": result.total_ms,
+    }
+
+
+@app.post("/voice/cache/generate")
+async def voice_cache_generate() -> dict[str, Any]:
+    count = await generate_phrase_cache()
+    return {"generated": count}
+
+
+# ── Setup endpoints ──────────────────────────────────────────────────
+
+@app.post("/setup/start")
+async def setup_start() -> dict[str, Any]:
+    global _setup_state
+    _setup_state = await start_setup()
+    return {
+        "status": "started",
+        "current_step": _setup_state.current_step,
+        "total_steps": len(_setup_state.steps),
+        "started_at": _setup_state.started_at,
+    }
+
+
+@app.post("/setup/step/{step_number}")
+async def setup_step(step_number: int, body: SetupStepRequest) -> dict[str, Any]:
+    global _setup_state
+    if _setup_state is None:
+        return {"error": "Setup not started. Call POST /setup/start first."}
+    _setup_state, result = await execute_step(_setup_state, step_number, body.config)
+    return {
+        "step": step_number,
+        "result": result,
+        "current_step": _setup_state.current_step,
+        "complete": is_setup_complete(_setup_state),
+    }
+
+
+@app.post("/setup/skip/{step_number}")
+async def setup_skip(step_number: int) -> dict[str, Any]:
+    global _setup_state
+    if _setup_state is None:
+        return {"error": "Setup not started. Call POST /setup/start first."}
+    try:
+        _setup_state, result = await skip_setup_step(_setup_state, step_number)
+        return {"step": step_number, "result": result}
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+@app.get("/setup/progress")
+async def setup_progress() -> dict[str, Any]:
+    global _setup_state
+    if _setup_state is None:
+        return {"error": "Setup not started. Call POST /setup/start first."}
+    return get_setup_progress(_setup_state)

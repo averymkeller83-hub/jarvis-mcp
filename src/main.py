@@ -19,7 +19,7 @@ def serve(host: str, port: int, reload: bool) -> None:
 @cli.command()
 def setup() -> None:
     """Run first-time setup."""
-    click.echo("Setup complete.")
+    click.echo("Starting setup... Visit http://127.0.0.1:7900/setup or use the API endpoints.")
 
 
 @cli.command()
