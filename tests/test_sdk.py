@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.sdk.base import AgentConfig, BaseAgent, trigger
 from src.sdk.context import SharedContext, ScopedContext
 from src.sdk.events import EventBus
 from src.sdk.permissions import (
@@ -234,3 +235,87 @@ def test_approve_agent(tmp_path: Path):
     loaded = load_permissions(path)
     assert loaded["pending"]["approved"] is True
     assert "approved_at" in loaded["pending"]
+
+
+# ── BaseAgent + @trigger ────────────────────────────────────────────
+
+
+class DummyAgent(BaseAgent):
+    config = AgentConfig(
+        name="dummy",
+        description="A test agent",
+        permissions=["web_requests"],
+        schedule="0 9 * * *",
+    )
+
+    @trigger("scheduled")
+    async def run_scheduled(self) -> dict:
+        return {"ran": True}
+
+    @trigger("user_invoked")
+    async def run_manual(self, params: dict) -> dict:
+        return {"params": params}
+
+    @trigger("event", event="test_event")
+    async def on_test(self, event_data: dict) -> dict:
+        return {"received": event_data.get("_source")}
+
+
+def test_agent_config_fields():
+    assert DummyAgent.config.name == "dummy"
+    assert DummyAgent.config.permissions == ["web_requests"]
+    assert DummyAgent.config.schedule == "0 9 * * *"
+    assert DummyAgent.config.version == "0.1.0"
+
+
+def test_trigger_metadata():
+    meta = getattr(DummyAgent.run_scheduled, "_trigger_meta", None)
+    assert meta is not None
+    assert meta["type"] == "scheduled"
+
+    meta2 = getattr(DummyAgent.run_manual, "_trigger_meta", None)
+    assert meta2["type"] == "user_invoked"
+
+    meta3 = getattr(DummyAgent.on_test, "_trigger_meta", None)
+    assert meta3["type"] == "event"
+    assert meta3["event"] == "test_event"
+
+
+@pytest.mark.asyncio
+async def test_agent_emit(tmp_path: Path):
+    bus = EventBus()
+    ctx = SharedContext(store_path=tmp_path / "ctx.toml")
+    agent = DummyAgent()
+    agent.context = ScopedContext(ctx, namespace="dummy")
+    agent._event_bus = bus
+
+    received = []
+    bus.subscribe("ping", lambda data: received.append(data))
+    await agent.emit("ping", {"msg": "hello"})
+    assert len(received) == 1
+    assert received[0]["msg"] == "hello"
+    assert received[0]["_source"] == "dummy"
+
+
+@pytest.mark.asyncio
+async def test_agent_lifecycle_hooks(tmp_path: Path):
+    class LifecycleAgent(BaseAgent):
+        config = AgentConfig(name="lc", description="test", permissions=[])
+        started = False
+        stopped = False
+
+        async def on_start(self) -> None:
+            self.started = True
+
+        async def on_stop(self) -> None:
+            self.stopped = True
+
+    agent = LifecycleAgent()
+    agent.context = ScopedContext(
+        SharedContext(store_path=tmp_path / "ctx.toml"), namespace="lc"
+    )
+    agent._event_bus = EventBus()
+    await agent.on_start()
+    assert agent.started is True
+    await agent.on_stop()
+    assert agent.stopped is True
