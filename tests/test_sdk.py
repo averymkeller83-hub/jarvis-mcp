@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
+from src.sdk.context import SharedContext, ScopedContext
 from src.sdk.events import EventBus
 
 
@@ -73,3 +75,91 @@ def test_list_subscriptions(bus: EventBus):
     subs = bus.list_subscriptions()
     assert "alpha" in subs
     assert "beta" in subs
+
+
+# ── SharedContext ────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def ctx(tmp_path: Path) -> SharedContext:
+    return SharedContext(store_path=tmp_path / "agent_context.toml")
+
+
+@pytest.mark.asyncio
+async def test_set_and_get(ctx: SharedContext):
+    await ctx.set("agent.key", "hello")
+    assert await ctx.get("agent.key") == "hello"
+
+
+@pytest.mark.asyncio
+async def test_get_default(ctx: SharedContext):
+    assert await ctx.get("missing.key", default=42) == 42
+
+
+@pytest.mark.asyncio
+async def test_delete(ctx: SharedContext):
+    await ctx.set("agent.temp", "value")
+    assert await ctx.delete("agent.temp") is True
+    assert await ctx.get("agent.temp") is None
+
+
+@pytest.mark.asyncio
+async def test_delete_nonexistent(ctx: SharedContext):
+    assert await ctx.delete("nope.nope") is False
+
+
+@pytest.mark.asyncio
+async def test_list_keys(ctx: SharedContext):
+    await ctx.set("scout.finds", [1, 2])
+    await ctx.set("scout.count", 2)
+    await ctx.set("briefing.time", "07:00")
+    keys = await ctx.list(prefix="scout.")
+    assert sorted(keys) == ["scout.count", "scout.finds"]
+
+
+@pytest.mark.asyncio
+async def test_clear_namespace(ctx: SharedContext):
+    await ctx.set("old.a", 1)
+    await ctx.set("old.b", 2)
+    await ctx.set("keep.c", 3)
+    removed = await ctx.clear_namespace("old")
+    assert removed == 2
+    assert await ctx.get("old.a") is None
+    assert await ctx.get("keep.c") == 3
+
+
+@pytest.mark.asyncio
+async def test_persistence(tmp_path: Path):
+    path = tmp_path / "agent_context.toml"
+    ctx1 = SharedContext(store_path=path)
+    await ctx1.set("agent.persist", "yes")
+
+    ctx2 = SharedContext(store_path=path)
+    assert await ctx2.get("agent.persist") == "yes"
+
+
+# ── ScopedContext ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_scoped_write_adds_prefix(tmp_path: Path):
+    ctx = SharedContext(store_path=tmp_path / "ctx.toml")
+    scoped = ScopedContext(ctx, namespace="myagent")
+    await scoped.set("result", {"score": 95})
+    assert await ctx.get("myagent.result") == {"score": 95}
+
+
+@pytest.mark.asyncio
+async def test_scoped_rejects_foreign_namespace(tmp_path: Path):
+    ctx = SharedContext(store_path=tmp_path / "ctx.toml")
+    scoped = ScopedContext(ctx, namespace="myagent")
+    with pytest.raises(PermissionError):
+        await scoped.set("other.secret", "nope")
+
+
+@pytest.mark.asyncio
+async def test_scoped_read_any_namespace(tmp_path: Path):
+    ctx = SharedContext(store_path=tmp_path / "ctx.toml")
+    await ctx.set("foreign.data", "visible")
+    scoped = ScopedContext(ctx, namespace="myagent")
+    assert await scoped.get("foreign.data") == "visible"
