@@ -11,6 +11,7 @@ import pytest
 from src.sdk.base import AgentConfig, BaseAgent, trigger
 from src.sdk.context import SharedContext, ScopedContext
 from src.sdk.events import EventBus
+from src.sdk.loader import discover_agents
 from src.sdk.permissions import (
     VALID_PERMISSIONS,
     approve_agent,
@@ -319,3 +320,69 @@ async def test_agent_lifecycle_hooks(tmp_path: Path):
     assert agent.started is True
     await agent.on_stop()
     assert agent.stopped is True
+
+
+# ── Loader ──────────────────────────────────────────────────────────
+
+
+def test_discover_agents_empty_dir(tmp_path: Path):
+    agents = discover_agents([tmp_path])
+    assert agents == []
+
+
+def test_discover_agents_finds_agent(tmp_path: Path):
+    agent_file = tmp_path / "my_agent.py"
+    agent_file.write_text(
+        "from src.sdk.base import AgentConfig, BaseAgent, trigger\n"
+        "\n"
+        "class MyAgent(BaseAgent):\n"
+        "    config = AgentConfig(\n"
+        "        name='my_agent',\n"
+        "        description='test',\n"
+        "        permissions=[],\n"
+        "    )\n"
+        "\n"
+        "    @trigger('user_invoked')\n"
+        "    async def run_now(self, params: dict) -> dict:\n"
+        "        return {'ok': True}\n"
+    )
+    agents = discover_agents([tmp_path])
+    assert len(agents) == 1
+    assert agents[0].config.name == "my_agent"
+
+
+def test_discover_agents_skips_non_agent_files(tmp_path: Path):
+    (tmp_path / "util.py").write_text("x = 1\n")
+    (tmp_path / "__init__.py").write_text("")
+    agents = discover_agents([tmp_path])
+    assert agents == []
+
+
+def test_discover_agents_skips_broken_files(tmp_path: Path):
+    (tmp_path / "broken.py").write_text("raise RuntimeError('nope')\n")
+    agents = discover_agents([tmp_path])
+    assert agents == []
+
+
+def test_discover_agents_multiple_dirs(tmp_path: Path):
+    dir_a = tmp_path / "a"
+    dir_b = tmp_path / "b"
+    dir_a.mkdir()
+    dir_b.mkdir()
+    (dir_a / "agent_a.py").write_text(
+        "from src.sdk.base import AgentConfig, BaseAgent, trigger\n"
+        "class AgentA(BaseAgent):\n"
+        "    config = AgentConfig(name='a', description='A', permissions=[])\n"
+        "    @trigger('user_invoked')\n"
+        "    async def run(self, params): return {}\n"
+    )
+    (dir_b / "agent_b.py").write_text(
+        "from src.sdk.base import AgentConfig, BaseAgent, trigger\n"
+        "class AgentB(BaseAgent):\n"
+        "    config = AgentConfig(name='b', description='B', permissions=[])\n"
+        "    @trigger('user_invoked')\n"
+        "    async def run(self, params): return {}\n"
+    )
+    agents = discover_agents([dir_a, dir_b])
+    names = {a.config.name for a in agents}
+    assert names == {"a", "b"}
