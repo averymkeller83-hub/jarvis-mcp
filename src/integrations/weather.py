@@ -121,6 +121,16 @@ async def fetch_weather_data(
             "summary": summary,
             "location": location,
         }
+    except Exception:
+        return {
+            "temp": 0,
+            "condition": "Unknown",
+            "high": 0,
+            "low": 0,
+            "summary": "Weather data unavailable.",
+            "location": "Unknown",
+            "error": True,
+        }
     finally:
         if own_client:
             await _client.aclose()

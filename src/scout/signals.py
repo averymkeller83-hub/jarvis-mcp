@@ -41,8 +41,16 @@ def load_signals(log_path: str | None = None) -> list[Signal]:
             line = line.strip()
             if not line:
                 continue
-            data = json.loads(line)
-            signals.append(Signal(**data))
+            try:
+                data = json.loads(line)
+                signals.append(Signal(
+                    candidate_id=data.get("candidate_id", ""),
+                    action=data.get("action", "ignored"),
+                    reason=data.get("reason"),
+                    timestamp=data.get("timestamp", ""),
+                ))
+            except (json.JSONDecodeError, TypeError):
+                continue  # skip malformed lines
     return signals
 
 

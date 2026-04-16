@@ -8,7 +8,7 @@ from typing import Any
 
 def render_dashboard(settings: dict[str, Any]) -> str:
     """Return a complete HTML page for the settings dashboard."""
-    settings_json = json.dumps(settings, default=str)
+    settings_json = json.dumps(settings, default=str).replace("</", "<\\/")
     return _TEMPLATE.replace("__SETTINGS_JSON__", settings_json)
 
 

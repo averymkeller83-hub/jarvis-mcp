@@ -62,7 +62,14 @@ def write_to_obsidian(briefing: Briefing, vault_path: str) -> str:
     Returns the absolute path of the file written.
     """
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    daily_dir = Path(vault_path) / "Daily Notes"
+    vault = Path(vault_path).resolve()
+    home = Path.home()
+    import tempfile
+    tmp_root = Path(tempfile.gettempdir()).resolve()
+    allowed_prefixes = (str(home), str(tmp_root), "/tmp")
+    if not any(str(vault).startswith(p) for p in allowed_prefixes):
+        raise ValueError(f"vault_path must be under the user's home directory, got: {vault}")
+    daily_dir = vault / "Daily Notes"
     daily_dir.mkdir(parents=True, exist_ok=True)
     note_path = daily_dir / f"{today}.md"
 

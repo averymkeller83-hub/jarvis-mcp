@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from uuid import uuid4
 
 VALID_CATEGORIES = {"trust", "code", "memory", "communication", "general"}
-VALID_STATUSES = {"approved", "rejected", "archived"}
+VALID_STATUSES = {"approved", "rejected", "archived", "pending_approval"}
 VALID_SOURCES = {"explicit", "heuristic", "session_sweep"}
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 COLUMNS = (
     "id",
@@ -38,8 +42,12 @@ class Lesson:
 class LessonStore:
     """Persistent lesson store backed by a single SQLite table."""
 
-    def __init__(self, db_path: str = "memory/lessons.db") -> None:
-        self._conn = sqlite3.connect(db_path)
+    def __init__(self, db_path: str | None = None) -> None:
+        if db_path is None:
+            db_path = str(_PROJECT_ROOT / "memory" / "lessons.db")
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._lock = threading.Lock()
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._create_table()
 
@@ -78,57 +86,63 @@ class LessonStore:
         )
 
     def _rows(self, sql: str, params: tuple = ()) -> list[Lesson]:
-        cur = self._conn.execute(sql, params)
-        return [self._row_to_lesson(r) for r in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(sql, params)
+            return [self._row_to_lesson(r) for r in cur.fetchall()]
 
     # ── write / mutate ────────────────────────────────────────────────
 
     def write(self, lesson: Lesson) -> str:
-        """Insert an approved lesson and return its id."""
-        self._conn.execute(
-            """
-            INSERT INTO lessons (id, content, category, pinned, created_at,
-                                 last_retrieved_at, source, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                lesson.id,
-                lesson.content,
-                lesson.category,
-                int(lesson.pinned),
-                lesson.created_at.isoformat(),
-                lesson.last_retrieved_at.isoformat() if lesson.last_retrieved_at else None,
-                lesson.source,
-                lesson.status,
-            ),
-        )
-        self._conn.commit()
+        """Insert a lesson and return its id."""
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO lessons (id, content, category, pinned, created_at,
+                                     last_retrieved_at, source, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    lesson.id,
+                    lesson.content,
+                    lesson.category,
+                    int(lesson.pinned),
+                    lesson.created_at.isoformat(),
+                    lesson.last_retrieved_at.isoformat() if lesson.last_retrieved_at else None,
+                    lesson.source,
+                    lesson.status,
+                ),
+            )
+            self._conn.commit()
         return lesson.id
 
     def archive(self, lesson_id: str) -> bool:
         """Set status to archived. Returns True if a row was updated."""
-        cur = self._conn.execute(
-            "UPDATE lessons SET status = 'archived' WHERE id = ?", (lesson_id,)
-        )
-        self._conn.commit()
-        return cur.rowcount > 0
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE lessons SET status = 'archived' WHERE id = ?", (lesson_id,)
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
 
     def pin(self, lesson_id: str) -> bool:
-        cur = self._conn.execute("UPDATE lessons SET pinned = 1 WHERE id = ?", (lesson_id,))
-        self._conn.commit()
-        return cur.rowcount > 0
+        with self._lock:
+            cur = self._conn.execute("UPDATE lessons SET pinned = 1 WHERE id = ?", (lesson_id,))
+            self._conn.commit()
+            return cur.rowcount > 0
 
     def unpin(self, lesson_id: str) -> bool:
-        cur = self._conn.execute("UPDATE lessons SET pinned = 0 WHERE id = ?", (lesson_id,))
-        self._conn.commit()
-        return cur.rowcount > 0
+        with self._lock:
+            cur = self._conn.execute("UPDATE lessons SET pinned = 0 WHERE id = ?", (lesson_id,))
+            self._conn.commit()
+            return cur.rowcount > 0
 
     def mark_retrieved(self, lesson_id: str) -> None:
-        now = datetime.now(timezone.utc).isoformat()
-        self._conn.execute(
-            "UPDATE lessons SET last_retrieved_at = ? WHERE id = ?", (now, lesson_id)
-        )
-        self._conn.commit()
+        with self._lock:
+            now = datetime.now(timezone.utc).isoformat()
+            self._conn.execute(
+                "UPDATE lessons SET last_retrieved_at = ? WHERE id = ?", (now, lesson_id)
+            )
+            self._conn.commit()
 
     # ── read ──────────────────────────────────────────────────────────
 

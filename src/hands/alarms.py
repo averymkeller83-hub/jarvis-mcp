@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 
 from src.hands import ControlResult
-from src.hands.osascript import run_osascript, run_shortcut
+from src.hands.osascript import _osa_escape, run_osascript, run_shortcut
 
 # ── Live-mode toggle ─────────────────────────────────────────────────
 _LIVE_MODE: bool = False
@@ -105,21 +105,24 @@ async def set_timer(duration: str) -> ControlResult:
             confirmed=True,
         )
 
-    # Fallback: osascript notification after delay
+    # Fallback: schedule a non-blocking notification after delay
     if seconds > 0:
-        notify_script = (
-            f"delay {seconds}\n"
-            'display notification "Timer complete!" '
-            f'with title "Jarvis Timer" subtitle "{duration}"'
-        )
-        fallback = await run_osascript(notify_script, timeout=float(seconds + 5))
-        if fallback.success:
-            return ControlResult(
-                success=True,
-                message=f"Timer set for {label} (notification fallback)",
-                action="timer",
-                confirmed=True,
+        async def _delayed_notification() -> None:
+            await asyncio.sleep(seconds)
+            notify_script = (
+                'display notification "Timer complete!" '
+                f'with title "Jarvis Timer" subtitle "{_osa_escape(duration)}"'
             )
+            await run_osascript(notify_script, timeout=10.0)
+
+        import asyncio
+        asyncio.create_task(_delayed_notification())
+        return ControlResult(
+            success=True,
+            message=f"Timer set for {label} (notification fallback)",
+            action="timer",
+            confirmed=True,
+        )
 
     return ControlResult(
         success=False,

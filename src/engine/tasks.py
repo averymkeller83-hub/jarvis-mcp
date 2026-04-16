@@ -118,7 +118,12 @@ def register_default_tasks(
     # Adjust next_run for morning briefing to the configured time
     task = engine._tasks["morning_briefing"]
     now = datetime.now(timezone.utc)
-    hour, minute = (int(p) for p in briefing_time.split(":"))
+    try:
+        parts = briefing_time.split(":")
+        hour, minute = int(parts[0]), int(parts[1])
+    except (ValueError, IndexError):
+        logger.warning("Invalid briefing_time %r, defaulting to 07:30", briefing_time)
+        hour, minute = 7, 30
     target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if target <= now:
         target += timedelta(days=1)

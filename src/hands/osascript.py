@@ -191,11 +191,17 @@ async def open_url(url: str) -> OSAResult:
         )
 
 
+def _osa_escape(s: str) -> str:
+    """Escape a string for safe embedding in AppleScript double-quoted literals."""
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
 async def check_app_running(app_name: str) -> bool:
     """Return ``True`` if *app_name* is currently running."""
+    safe = _osa_escape(app_name)
     script = (
         f'tell application "System Events" to '
-        f'(name of processes) contains "{app_name}"'
+        f'(name of processes) contains "{safe}"'
     )
     result = await run_osascript(script)
     return result.success and result.stdout.strip().lower() == "true"
@@ -203,5 +209,6 @@ async def check_app_running(app_name: str) -> bool:
 
 async def launch_app(app_name: str) -> OSAResult:
     """Launch *app_name* if it is not already running (diagnostic auto-fix)."""
-    script = f'tell application "{app_name}" to activate'
+    safe = _osa_escape(app_name)
+    script = f'tell application "{safe}" to activate'
     return await run_osascript(script, timeout=15.0)

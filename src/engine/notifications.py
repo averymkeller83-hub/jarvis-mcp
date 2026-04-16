@@ -75,12 +75,14 @@ async def send_notification(
         try:
             if channel == "macos":
                 if not test_mode:
+                    safe_body = notification.body.replace("\\", "\\\\").replace('"', '\\"')
+                    safe_title = notification.title.replace("\\", "\\\\").replace('"', '\\"')
                     subprocess.run(
                         [
                             "osascript",
                             "-e",
-                            f'display notification "{notification.body}" '
-                            f'with title "{notification.title}"',
+                            f'display notification "{safe_body}" '
+                            f'with title "{safe_title}"',
                         ],
                         check=False,
                         capture_output=True,

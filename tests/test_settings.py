@@ -264,7 +264,7 @@ async def test_put_settings_section(client: httpx.AsyncClient):
 @pytest.mark.asyncio
 async def test_put_settings_section_unknown(client: httpx.AsyncClient):
     resp = await client.put("/settings/does_not_exist", json={"a": 1})
-    assert resp.status_code == 200
+    assert resp.status_code == 404
     data = resp.json()
     assert data["success"] is False
 

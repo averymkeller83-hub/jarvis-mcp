@@ -96,8 +96,11 @@ def _read_toml(name: str, defaults: dict[str, Any]) -> dict[str, Any]:
 def _write_toml(name: str, data: dict[str, Any]) -> bool:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     path = _toml_path(name)
-    with open(path, "w") as f:
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "w") as f:
         toml.dump(data, f)
+    import os
+    os.replace(tmp, path)
     return True
 
 
@@ -199,8 +202,8 @@ def save_setting(section: str, key: str, value: Any) -> bool:
     loader, saver = _SECTION_MAP[section]
     data = loader()
     # For nested personality sub-sections, update within the right key
-    if section in ("voice", "behavior") and section in data:
-        data[section][key] = value
+    if section in ("voice", "behavior"):
+        data.setdefault(section, {})[key] = value
     else:
         data[key] = value
     return saver(data)

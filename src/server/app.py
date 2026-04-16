@@ -301,9 +301,14 @@ async def settings_export() -> dict[str, str]:
 
 @app.put("/settings/{section_name}")
 async def settings_update_section(section_name: str, body: dict[str, Any]) -> dict[str, Any]:
+    from fastapi.responses import JSONResponse
+
     ok = save_section(section_name, body)
     if not ok:
-        return {"success": False, "error": f"Unknown section: {section_name}"}
+        return JSONResponse(
+            status_code=404,
+            content={"success": False, "error": f"Unknown section: {section_name}"},
+        )
     return {"success": True, "section": section_name}
 
 
@@ -311,10 +316,15 @@ async def settings_update_section(section_name: str, body: dict[str, Any]) -> di
 async def settings_update_key(
     section_name: str, key: str, body: dict[str, Any]
 ) -> dict[str, Any]:
+    from fastapi.responses import JSONResponse
+
     value = body.get("value")
     ok = save_setting(section_name, key, value)
     if not ok:
-        return {"success": False, "error": f"Unknown section: {section_name}"}
+        return JSONResponse(
+            status_code=404,
+            content={"success": False, "error": f"Unknown section: {section_name}"},
+        )
     return {"success": True, "section": section_name, "key": key}
 
 

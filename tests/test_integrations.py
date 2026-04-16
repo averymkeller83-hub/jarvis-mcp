@@ -117,10 +117,11 @@ class TestFetchWeatherData:
         assert params["longitude"] == DEFAULT_LON
 
     @pytest.mark.asyncio
-    async def test_http_error_propagates(self):
+    async def test_http_error_returns_fallback(self):
         client = _mock_client(_mock_response(status_code=500, json_data={}))
-        with pytest.raises(Exception):
-            await fetch_weather_data(30.0, -97.0, client=client)
+        result = await fetch_weather_data(30.0, -97.0, client=client)
+        assert result.get("error") is True
+        assert result["condition"] == "Unknown"
 
 
 class TestGeocodeLocation:
@@ -661,13 +662,14 @@ class TestScoutScannersIntegration:
 
 class TestErrorHandling:
     @pytest.mark.asyncio
-    async def test_weather_timeout(self):
+    async def test_weather_timeout_returns_fallback(self):
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
         client.aclose = AsyncMock()
 
-        with pytest.raises(httpx.TimeoutException):
-            await fetch_weather_data(30.0, -97.0, client=client)
+        result = await fetch_weather_data(30.0, -97.0, client=client)
+        assert result.get("error") is True
+        assert result["summary"] == "Weather data unavailable."
 
     @pytest.mark.asyncio
     async def test_rss_malformed_xml(self):

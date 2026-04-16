@@ -83,6 +83,9 @@ class ProactiveEngine:
             return False
         now = datetime.now(timezone.utc)
         next_dt = datetime.fromisoformat(task.next_run)
+        # Normalise naive datetimes to UTC for safe comparison
+        if next_dt.tzinfo is None:
+            next_dt = next_dt.replace(tzinfo=timezone.utc)
         return now >= next_dt
 
     async def run_task(self, name: str) -> dict[str, Any]:

@@ -66,6 +66,9 @@ async def sandbox_test(candidate: Candidate) -> SandboxResult:
 def is_sandbox_expired(result: SandboxResult) -> bool:
     """Check whether a sandbox result's 7-day window has passed."""
     expires = datetime.fromisoformat(result.expires_at)
+    # Normalise naive datetimes (pre-3.11 fromisoformat) to UTC
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
     return datetime.now(timezone.utc) > expires
 
 

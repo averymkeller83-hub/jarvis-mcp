@@ -6,6 +6,8 @@ When False (default), returns mock results to preserve test behaviour.
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from src.hands import ControlResult
 from src.hands.osascript import open_url, run_osascript
 
@@ -15,7 +17,7 @@ _LIVE_MODE: bool = False
 
 async def make_call(contact: str) -> ControlResult:
     """Initiate a phone call via ``tel:`` URL scheme."""
-    url = f"tel:{contact}"
+    url = f"tel:{quote(contact, safe='@+')}"
 
     if not _LIVE_MODE:
         return ControlResult(
@@ -43,7 +45,7 @@ async def make_call(contact: str) -> ControlResult:
 
 async def facetime_call(contact: str) -> ControlResult:
     """Initiate FaceTime via ``facetime:`` URL scheme."""
-    url = f"facetime:{contact}"
+    url = f"facetime:{quote(contact, safe='@+')}"
 
     if not _LIVE_MODE:
         return ControlResult(

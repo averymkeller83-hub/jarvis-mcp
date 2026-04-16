@@ -37,10 +37,16 @@ def clear_recent() -> None:
     _recent_cache.clear()
 
 
-# ── Nickname loader ───────────────────────────────────────────────────
+# ── Nickname loader (cached) ──────────────────────────────────────────
+
+_nickname_cache: dict[str, str] | None = None
+_nickname_mtime: float = 0.0
+
 
 def _load_nicknames() -> dict[str, str]:
     """Load nickname → full-name map from ``config/contacts_nicknames.toml``.
+
+    Caches the result and only reloads when the file's mtime changes.
 
     Expected TOML format::
 
@@ -50,11 +56,22 @@ def _load_nicknames() -> dict[str, str]:
 
     Returns an empty dict if the file doesn't exist.
     """
+    global _nickname_cache, _nickname_mtime
+
     path = CONFIG_DIR / "contacts_nicknames.toml"
     if not path.exists():
-        return {}
+        _nickname_cache = {}
+        _nickname_mtime = 0.0
+        return _nickname_cache
+
+    current_mtime = path.stat().st_mtime
+    if _nickname_cache is not None and current_mtime == _nickname_mtime:
+        return _nickname_cache
+
     data = toml.load(path)
-    return {k.lower(): v for k, v in data.get("nicknames", {}).items()}
+    _nickname_cache = {k.lower(): v for k, v in data.get("nicknames", {}).items()}
+    _nickname_mtime = current_mtime
+    return _nickname_cache
 
 
 # ── Layer 1: macOS Contacts.app (mock) ────────────────────────────────
