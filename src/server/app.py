@@ -46,6 +46,7 @@ from src.setup.engine import (
 )
 from src.setup.steps import SetupState
 from src.sdk.manager import AgentManager
+from src.auth.routes import router as auth_router
 from src.voice.activation import ActivationConfig, VoiceActivation
 from src.voice.pipeline import voice_roundtrip
 from src.voice.stt import transcribe
@@ -91,6 +92,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router)
 
 
 # ── Request / Response models ────────────────────────────────────────

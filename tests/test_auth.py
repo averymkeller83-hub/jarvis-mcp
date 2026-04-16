@@ -134,3 +134,130 @@ def test_verify_wrong_secret(tmp_path: Path):
         username="avery", role="admin", secret=secret
     )
     assert verify_token(token, secret="wrong-secret") is None
+
+
+import httpx
+from httpx import ASGITransport
+
+from src.server.app import app
+
+
+# ── Auth API ───────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def client():
+    transport = ASGITransport(app=app)
+    return httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:7900")
+
+
+@pytest.mark.asyncio
+async def test_register(client: httpx.AsyncClient):
+    resp = await client.post("/api/auth/register", json={
+        "username": "testuser",
+        "password": "testpass123",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["username"] == "testuser"
+
+
+@pytest.mark.asyncio
+async def test_register_duplicate(client: httpx.AsyncClient):
+    await client.post("/api/auth/register", json={
+        "username": "dupuser",
+        "password": "pass1",
+    })
+    resp = await client.post("/api/auth/register", json={
+        "username": "dupuser",
+        "password": "pass2",
+    })
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_login(client: httpx.AsyncClient):
+    await client.post("/api/auth/register", json={
+        "username": "loginuser",
+        "password": "mypass",
+    })
+    resp = await client.post("/api/auth/login", json={
+        "username": "loginuser",
+        "password": "mypass",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "access_token" in data
+    assert "refresh_token" in data
+
+
+@pytest.mark.asyncio
+async def test_login_wrong_password(client: httpx.AsyncClient):
+    await client.post("/api/auth/register", json={
+        "username": "wrongpw",
+        "password": "correct",
+    })
+    resp = await client.post("/api/auth/login", json={
+        "username": "wrongpw",
+        "password": "incorrect",
+    })
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_login_unknown_user(client: httpx.AsyncClient):
+    resp = await client.post("/api/auth/login", json={
+        "username": "ghost",
+        "password": "nope",
+    })
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_refresh_token(client: httpx.AsyncClient):
+    await client.post("/api/auth/register", json={
+        "username": "refreshuser",
+        "password": "pass",
+    })
+    login_resp = await client.post("/api/auth/login", json={
+        "username": "refreshuser",
+        "password": "pass",
+    })
+    refresh_token = login_resp.json()["refresh_token"]
+    resp = await client.post("/api/auth/refresh", json={
+        "refresh_token": refresh_token,
+    })
+    assert resp.status_code == 200
+    assert "access_token" in resp.json()
+
+
+@pytest.mark.asyncio
+async def test_refresh_with_invalid_token(client: httpx.AsyncClient):
+    resp = await client.post("/api/auth/refresh", json={
+        "refresh_token": "garbage",
+    })
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_me_authenticated(client: httpx.AsyncClient):
+    await client.post("/api/auth/register", json={
+        "username": "meuser",
+        "password": "pass",
+    })
+    login_resp = await client.post("/api/auth/login", json={
+        "username": "meuser",
+        "password": "pass",
+    })
+    token = login_resp.json()["access_token"]
+    resp = await client.get("/api/auth/me", headers={
+        "Authorization": f"Bearer {token}",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["username"] == "meuser"
+
+
+@pytest.mark.asyncio
+async def test_me_unauthenticated(client: httpx.AsyncClient):
+    resp = await client.get("/api/auth/me")
+    assert resp.status_code == 401
