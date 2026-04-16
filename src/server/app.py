@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import FastAPI, Query
+from fastapi import APIRouter, FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.responses import FileResponse
 from pydantic import BaseModel
 
 from src.brain.router import classify, control_intent, local_intent
@@ -45,6 +48,8 @@ from src.setup.engine import (
     start_setup,
 )
 from src.setup.steps import SetupState
+from src.sdk.manager import AgentManager
+from src.auth.routes import router as auth_router
 from src.voice.activation import ActivationConfig, VoiceActivation
 from src.voice.pipeline import voice_roundtrip
 from src.voice.stt import transcribe
@@ -56,13 +61,26 @@ _start_time: float = 0.0
 _setup_state: SetupState | None = None
 _voice_activation = VoiceActivation(ActivationConfig())
 _engine = ProactiveEngine()
+_agent_manager: AgentManager | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _start_time
+    global _start_time, _agent_manager
     _start_time = time.monotonic()
     register_default_tasks(_engine)
+
+    # Initialize agent manager
+    from pathlib import Path
+    project_root = Path(__file__).resolve().parent.parent.parent
+    _agent_manager = AgentManager(
+        engine=_engine,
+        config_dir=project_root / "config",
+        builtin_dir=project_root / "src" / "agents",
+        user_dir=project_root / "agents",
+    )
+    await _agent_manager.discover_and_register()
+
     await _engine.start()
     yield
     await _engine.stop()
@@ -72,11 +90,17 @@ app = FastAPI(title="Jarvis MCP Core Daemon", version=VERSION, lifespan=lifespan
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1", "http://127.0.0.1:*"],
-    allow_origin_regex=r"^http://127\.0\.0\.1(:\d+)?$",
+    allow_origins=[
+        "http://127.0.0.1",
+        "http://127.0.0.1:*",
+        "http://localhost:5173",
+    ],
+    allow_origin_regex=r"^http://(127\.0\.0\.1|localhost)(:\d+)?$",
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router)
 
 
 # ── Request / Response models ────────────────────────────────────────
@@ -138,6 +162,20 @@ async def health() -> dict[str, Any]:
 
 @app.get("/status")
 async def status() -> dict[str, Any]:
+    agent_info = {}
+    if _agent_manager is not None:
+        listing = _agent_manager.list_agents()
+        running = sum(1 for a in listing if a["status"] == "running")
+        pending = sum(1 for a in listing if a["status"] == "pending")
+        agent_info = {
+            "agents": "available",
+            "agent_count": len(listing),
+            "agents_running": running,
+            "agents_pending": pending,
+        }
+    else:
+        agent_info = {"agents": "unavailable"}
+
     return {
         "daemon": "running",
         "services": {
@@ -149,6 +187,7 @@ async def status() -> dict[str, Any]:
             "voice": "available",
             "setup": "available",
             "engine": "available",
+            **agent_info,
         },
     }
 
@@ -401,6 +440,105 @@ async def engine_stop() -> dict[str, str]:
     return {"status": "stopped"}
 
 
+# ── Agent endpoints ────────────────────────────────────────────────
+
+
+class AgentRunRequest(BaseModel):
+    params: dict = {}
+
+
+@app.get("/agents")
+async def agents_list() -> dict[str, Any]:
+    if _agent_manager is None:
+        return {"agents": [], "count": 0}
+    listing = _agent_manager.list_agents()
+    return {"agents": listing, "count": len(listing)}
+
+
+@app.get("/agents/{name}")
+async def agents_detail(name: str) -> dict[str, Any]:
+    from fastapi.responses import JSONResponse
+
+    if _agent_manager is None:
+        return JSONResponse(status_code=404, content={"error": "Agent manager not initialized"})
+    detail = _agent_manager.get_agent(name)
+    if detail is None:
+        return JSONResponse(status_code=404, content={"error": f"Agent '{name}' not found"})
+    return detail
+
+
+@app.post("/agents/{name}/run")
+async def agents_run(name: str, body: AgentRunRequest) -> dict[str, Any]:
+    from fastapi.responses import JSONResponse
+
+    if _agent_manager is None:
+        return JSONResponse(status_code=503, content={"error": "Agent manager not initialized"})
+    result = await _agent_manager.invoke(name, body.params)
+    if "error" in result:
+        return JSONResponse(status_code=400, content=result)
+    return result
+
+
+@app.put("/agents/{name}/approve")
+async def agents_approve(name: str) -> dict[str, Any]:
+    from fastapi.responses import JSONResponse
+
+    if _agent_manager is None:
+        return JSONResponse(status_code=503, content={"error": "Agent manager not initialized"})
+    await _agent_manager.approve(name)
+    return {"success": True, "agent": name, "status": "running"}
+
+
+@app.post("/agents/{name}/stop")
+async def agents_stop(name: str) -> dict[str, Any]:
+    if _agent_manager is None:
+        return {"error": "Agent manager not initialized"}
+    await _agent_manager.stop_agent(name)
+    return {"success": True, "agent": name, "status": "stopped"}
+
+
+@app.post("/agents/{name}/start")
+async def agents_start(name: str) -> dict[str, Any]:
+    if _agent_manager is None:
+        return {"error": "Agent manager not initialized"}
+    await _agent_manager.start_agent(name)
+    return {"success": True, "agent": name, "status": "running"}
+
+
+@app.get("/agents/{name}/context")
+async def agents_context(name: str) -> dict[str, Any]:
+    from fastapi.responses import JSONResponse
+
+    if _agent_manager is None:
+        return JSONResponse(status_code=503, content={"error": "Agent manager not initialized"})
+    agent = _agent_manager.agents.get(name)
+    if agent is None:
+        return JSONResponse(status_code=404, content={"error": f"Agent '{name}' not found"})
+    keys = await _agent_manager._context.list(prefix=f"{name}.")
+    data = {}
+    for key in keys:
+        data[key] = await _agent_manager._context.get(key)
+    return data
+
+
+@app.get("/events")
+async def events_list() -> dict[str, Any]:
+    if _agent_manager is None:
+        return {"subscriptions": {}}
+    return {"subscriptions": _agent_manager.event_bus.list_subscriptions()}
+
+
+@app.get("/events/history")
+async def events_history(
+    source: str | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    if _agent_manager is None:
+        return {"events": [], "count": 0}
+    events = _agent_manager.event_bus.get_history(source=source, limit=limit)
+    return {"events": events, "count": len(events)}
+
+
 # ── Voice endpoints ─────────────────────────────────────────────────
 
 @app.post("/voice/transcribe")
@@ -503,3 +641,75 @@ async def setup_progress() -> dict[str, Any]:
     if _setup_state is None:
         return {"error": "Setup not started. Call POST /setup/start first."}
     return get_setup_progress(_setup_state)
+
+
+# ── API-prefixed routes (mirrors of legacy routes) ─────────────────
+
+api_router = APIRouter(prefix="/api")
+
+api_router.add_api_route("/health", health, methods=["GET"])
+api_router.add_api_route("/status", status, methods=["GET"])
+api_router.add_api_route("/route", route, methods=["POST"])
+api_router.add_api_route("/control/execute", control_execute, methods=["POST"])
+api_router.add_api_route("/control/confirm", control_confirm, methods=["POST"])
+api_router.add_api_route("/briefing", briefing, methods=["GET"])
+api_router.add_api_route("/briefing/obsidian", briefing_obsidian, methods=["GET"])
+api_router.add_api_route("/news/catalog", news_catalog, methods=["GET"])
+api_router.add_api_route("/news/sources", news_sources_update, methods=["PUT"])
+api_router.add_api_route("/lessons", lessons_list, methods=["GET"])
+api_router.add_api_route("/lessons/propose", lessons_propose, methods=["POST"])
+api_router.add_api_route("/scout/sources", scout_sources, methods=["GET"])
+api_router.add_api_route("/scout/discover", scout_discover, methods=["POST"])
+api_router.add_api_route("/scout/install", scout_install, methods=["POST"])
+api_router.add_api_route("/scout/dismiss", scout_dismiss, methods=["POST"])
+api_router.add_api_route("/settings", settings, methods=["GET"])
+api_router.add_api_route("/settings/dashboard", settings_dashboard, methods=["GET"])
+api_router.add_api_route("/settings/notifications", settings_notifications_get, methods=["GET"])
+api_router.add_api_route("/settings/notifications", settings_notifications_put, methods=["PUT"])
+api_router.add_api_route("/settings/control-tiers", settings_control_tiers_get, methods=["GET"])
+api_router.add_api_route("/settings/control-tiers", settings_control_tiers_put, methods=["PUT"])
+api_router.add_api_route("/settings/export", settings_export, methods=["POST"])
+api_router.add_api_route("/settings/{section_name}", settings_update_section, methods=["PUT"])
+api_router.add_api_route("/settings/{section_name}/{key}", settings_update_key, methods=["PUT"])
+api_router.add_api_route("/engine/schedule", engine_schedule, methods=["GET"])
+api_router.add_api_route("/engine/run/{task_name}", engine_run_task, methods=["POST"])
+api_router.add_api_route("/engine/status", engine_status, methods=["GET"])
+api_router.add_api_route("/engine/start", engine_start, methods=["POST"])
+api_router.add_api_route("/engine/stop", engine_stop, methods=["POST"])
+api_router.add_api_route("/agents", agents_list, methods=["GET"])
+api_router.add_api_route("/agents/{name}", agents_detail, methods=["GET"])
+api_router.add_api_route("/agents/{name}/run", agents_run, methods=["POST"])
+api_router.add_api_route("/agents/{name}/approve", agents_approve, methods=["PUT"])
+api_router.add_api_route("/agents/{name}/stop", agents_stop, methods=["POST"])
+api_router.add_api_route("/agents/{name}/start", agents_start, methods=["POST"])
+api_router.add_api_route("/agents/{name}/context", agents_context, methods=["GET"])
+api_router.add_api_route("/events", events_list, methods=["GET"])
+api_router.add_api_route("/events/history", events_history, methods=["GET"])
+api_router.add_api_route("/voice/transcribe", voice_transcribe, methods=["POST"])
+api_router.add_api_route("/voice/synthesize", voice_synthesize, methods=["POST"])
+api_router.add_api_route("/voice/status", voice_status, methods=["GET"])
+api_router.add_api_route("/voice/pipeline", voice_pipeline, methods=["POST"])
+api_router.add_api_route("/voice/cache/generate", voice_cache_generate, methods=["POST"])
+api_router.add_api_route("/setup/start", setup_start, methods=["POST"])
+api_router.add_api_route("/setup/step/{step_number}", setup_step, methods=["POST"])
+api_router.add_api_route("/setup/skip/{step_number}", setup_skip, methods=["POST"])
+api_router.add_api_route("/setup/progress", setup_progress, methods=["GET"])
+
+app.include_router(api_router)
+
+
+# ── Static file serving (SPA) ──────────────────────────────────────
+
+_DASHBOARD_DIR = Path(__file__).resolve().parent.parent.parent / "dashboard" / "dist"
+
+if _DASHBOARD_DIR.is_dir():
+    if (_DASHBOARD_DIR / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=_DASHBOARD_DIR / "assets"), name="assets")
+
+    @app.get("/{path:path}")
+    async def spa_fallback(path: str):
+        """Serve static files or fall back to index.html for SPA routing."""
+        file_path = _DASHBOARD_DIR / path
+        if file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(_DASHBOARD_DIR / "index.html")

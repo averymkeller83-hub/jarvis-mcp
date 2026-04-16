@@ -12,6 +12,8 @@ dependencies = [
     "click",
     "toml",
     "sqlite-utils",
+    "bcrypt",
+    "PyJWT",
 ]
 
 [project.scripts]
