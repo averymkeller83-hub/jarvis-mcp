@@ -337,16 +337,23 @@ async def test_handle_first_scan(state):
 async def test_handle_done_default_name(state):
     state, result = await handle_done(state, {})
     assert "Sir" in result["message"]
+    assert "JARVIS" in result["message"]
+    assert "more time for" in result["message"]
+    assert "Avery Keller" in result["message"]
+    assert result["sent_via"] == "macos_notifications"
     step = get_step(state, 13)
     assert step.completed is True
 
 
 async def test_handle_done_personalised(state):
     # Complete step 2 first with a user name
-    complete_step(state, 2, {"user_name": "Avery"})
+    complete_step(state, 2, {"user_name": "Avery", "assistant_name": "JARVIS"})
+    complete_step(state, 3, {"primary": "telegram", "enabled": ["telegram"]})
     state, result = await handle_done(state, {})
     assert "Avery" in result["message"]
     assert result["user_name"] == "Avery"
+    assert result["sent_via"] == "telegram"
+    assert "driver's seat" in result["message"]
 
 
 def test_step_handlers_dict_has_all_13():
@@ -590,10 +597,12 @@ async def test_full_setup_walkthrough(client, tmp_path, monkeypatch):
         resp = await client.post("/setup/step/12", json={"config": {}})
         assert resp.json()["result"]["scan_count"] == 0
 
-    # Step 13 — done
+    # Step 13 — done (first contact message)
     resp = await client.post("/setup/step/13", json={"config": {}})
     data = resp.json()
     assert "Avery" in data["result"]["message"]
+    assert "more time for" in data["result"]["message"]
+    assert data["result"]["sent_via"] == "telegram"
     assert data["complete"] is True
 
     # Verify progress

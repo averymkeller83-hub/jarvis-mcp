@@ -225,9 +225,30 @@ async def handle_first_scan(
     return state, result
 
 
+def _build_first_contact(assistant_name: str, user_name: str) -> str:
+    """Build the first-contact message Jarvis sends after setup completes."""
+    return (
+        f"Good day, {user_name}. I'm {assistant_name} — created by Avery Keller, "
+        "inspired by the vision of Jarvis from Iron Man, and powered by Claude.\n\n"
+        "I'm here to make your life easier. The more you share with me, the "
+        "better I get — think of us as a team that sharpens each other.\n\n"
+        "Here's a taste of what I can help with:\n"
+        "- Finding and applying to jobs that match your skills\n"
+        "- Learning new things — I'll quiz you, find resources, track progress\n"
+        "- Meal planning and grocery lists for the week\n"
+        "- Staying on top of deadlines at work or school\n"
+        "- Morning briefings so you start every day prepared\n"
+        "- Watching your projects for issues, PRs, and things that need attention\n\n"
+        "To get started, I'd love to know just one thing:\n\n"
+        "What's something you wish you had more time for?\n\n"
+        "That'll tell me a lot about where I can help first. And don't worry "
+        "— I'll always follow up with questions so you stay in the driver's "
+        "seat. Nothing happens without you saying so."
+    )
+
+
 async def handle_done(state: SetupState, config: dict) -> tuple[SetupState, dict]:
-    """Step 13 — Completion message using user's name."""
-    # Pull user name from step 2 result, or fall back to config / default
+    """Step 13 — Send first-contact message and mark setup complete."""
     from src.setup.steps import get_step
 
     step2 = get_step(state, 2)
@@ -237,8 +258,40 @@ async def handle_done(state: SetupState, config: dict) -> tuple[SetupState, dict
     elif config.get("user_name"):
         user_name = config["user_name"]
 
-    message = f"Ready when you are, {user_name}."
-    result = {"message": message, "user_name": user_name}
+    # Pull assistant name from step 2 as well
+    assistant_name = "JARVIS"
+    if step2 and step2.result:
+        assistant_name = step2.result.get("assistant_name", "JARVIS")
+
+    # Pull chosen communication channel from step 3
+    step3 = get_step(state, 3)
+    primary_channel = "macos_notifications"
+    if step3 and step3.result:
+        primary_channel = step3.result.get("primary", "macos_notifications")
+
+    first_contact = _build_first_contact(assistant_name, user_name)
+
+    # Dispatch via notification system
+    try:
+        from src.engine.notifications import Notification, send_notification
+
+        notif = Notification(
+            event_type="first_contact",
+            title=f"{assistant_name} is ready",
+            body=first_contact,
+            channels=[primary_channel],
+        )
+        dispatch_result = await send_notification(notif)
+    except Exception:
+        dispatch_result = {"sent_to": [], "error": "dispatch failed"}
+
+    result = {
+        "message": first_contact,
+        "user_name": user_name,
+        "assistant_name": assistant_name,
+        "sent_via": primary_channel,
+        "dispatch": dispatch_result,
+    }
     state = complete_step(state, 13, result)
     return state, result
 
