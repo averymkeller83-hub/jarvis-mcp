@@ -141,8 +141,22 @@ from httpx import ASGITransport
 
 from src.server.app import app
 
+_CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
+
 
 # ── Auth API ───────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _clean_test_users():
+    """Remove test-generated users.toml so API tests start fresh."""
+    users_file = _CONFIG_DIR / "users.toml"
+    if users_file.exists():
+        users_file.unlink()
+    yield
+    # cleanup after all tests
+    if users_file.exists():
+        users_file.unlink()
 
 
 @pytest.fixture
@@ -292,3 +306,57 @@ async def test_legacy_routes_still_work(client: httpx.AsyncClient):
     resp = await client.get("/status")
     assert resp.status_code == 200
     assert resp.json()["daemon"] == "running"
+
+
+from src.sdk.events import EventBus
+
+
+# ── Event History ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_event_history_records_events():
+    bus = EventBus(history_size=10)
+    await bus.emit("test_event", {"key": "val"}, source="test")
+    history = bus.get_history()
+    assert len(history) == 1
+    assert history[0]["event"] == "test_event"
+    assert history[0]["data"]["key"] == "val"
+    assert history[0]["source"] == "test"
+
+
+@pytest.mark.asyncio
+async def test_event_history_respects_size_limit():
+    bus = EventBus(history_size=3)
+    for i in range(5):
+        await bus.emit("evt", {"i": i}, source="test")
+    history = bus.get_history()
+    assert len(history) == 3
+    assert history[0]["data"]["i"] == 2  # oldest kept
+    assert history[2]["data"]["i"] == 4  # newest
+
+
+@pytest.mark.asyncio
+async def test_event_history_filter_by_source():
+    bus = EventBus(history_size=10)
+    await bus.emit("a", {}, source="agent1")
+    await bus.emit("b", {}, source="agent2")
+    await bus.emit("c", {}, source="agent1")
+    history = bus.get_history(source="agent1")
+    assert len(history) == 2
+    assert all(h["source"] == "agent1" for h in history)
+
+
+@pytest.mark.asyncio
+async def test_event_history_default_empty():
+    bus = EventBus()
+    assert bus.get_history() == []
+
+
+@pytest.mark.asyncio
+async def test_api_events_history(client: httpx.AsyncClient):
+    resp = await client.get("/api/events/history")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "events" in data
+    assert isinstance(data["events"], list)

@@ -521,6 +521,17 @@ async def events_list() -> dict[str, Any]:
     return {"subscriptions": _agent_manager.event_bus.list_subscriptions()}
 
 
+@app.get("/events/history")
+async def events_history(
+    source: str | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    if _agent_manager is None:
+        return {"events": [], "count": 0}
+    events = _agent_manager.event_bus.get_history(source=source, limit=limit)
+    return {"events": events, "count": len(events)}
+
+
 # ── Voice endpoints ─────────────────────────────────────────────────
 
 @app.post("/voice/transcribe")
@@ -666,6 +677,7 @@ api_router.add_api_route("/agents/{name}/stop", agents_stop, methods=["POST"])
 api_router.add_api_route("/agents/{name}/start", agents_start, methods=["POST"])
 api_router.add_api_route("/agents/{name}/context", agents_context, methods=["GET"])
 api_router.add_api_route("/events", events_list, methods=["GET"])
+api_router.add_api_route("/events/history", events_history, methods=["GET"])
 api_router.add_api_route("/voice/transcribe", voice_transcribe, methods=["POST"])
 api_router.add_api_route("/voice/synthesize", voice_synthesize, methods=["POST"])
 api_router.add_api_route("/voice/status", voice_status, methods=["GET"])

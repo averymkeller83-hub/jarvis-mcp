@@ -18,8 +18,10 @@ class EventBus:
     subscribers.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, history_size: int = 200) -> None:
         self._subs: dict[str, list[Callable]] = {}
+        self._history: list[dict[str, Any]] = []
+        self._history_size = history_size
 
     def subscribe(self, event_name: str, callback: Callable) -> None:
         self._subs.setdefault(event_name, []).append(callback)
@@ -34,6 +36,17 @@ class EventBus:
             "_source": source,
             "_timestamp": datetime.now(timezone.utc).isoformat(),
         }
+
+        # Record to history ring buffer
+        self._history.append({
+            "event": event_name,
+            "data": data,
+            "source": source,
+            "timestamp": payload["_timestamp"],
+        })
+        if len(self._history) > self._history_size:
+            self._history = self._history[-self._history_size:]
+
         listeners = self._subs.get(event_name, [])
         if not listeners:
             return
@@ -50,6 +63,17 @@ class EventBus:
 
     async def _safe_call(self, callback: Callable, payload: dict) -> Any:
         return await callback(payload)
+
+    def get_history(
+        self, source: str | None = None, limit: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Return recorded events, optionally filtered by source."""
+        events = self._history
+        if source is not None:
+            events = [e for e in events if e["source"] == source]
+        if limit is not None:
+            events = events[-limit:]
+        return events
 
     def list_subscriptions(self) -> dict[str, list[str]]:
         return {
