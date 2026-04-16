@@ -10,6 +10,14 @@ import pytest
 
 from src.sdk.context import SharedContext, ScopedContext
 from src.sdk.events import EventBus
+from src.sdk.permissions import (
+    VALID_PERMISSIONS,
+    approve_agent,
+    is_approved,
+    load_permissions,
+    save_permissions,
+    validate_permissions,
+)
 
 
 # ── EventBus ────────────────────────────────────────────────────────
@@ -163,3 +171,66 @@ async def test_scoped_read_any_namespace(tmp_path: Path):
     await ctx.set("foreign.data", "visible")
     scoped = ScopedContext(ctx, namespace="myagent")
     assert await scoped.get("foreign.data") == "visible"
+
+
+# ── Permissions ─────────────────────────────────────────────────────
+
+
+def test_valid_permissions_is_complete():
+    expected = {
+        "web_requests", "send_notifications", "read_calendar",
+        "read_reminders", "read_contacts", "file_read", "file_write",
+        "execute_control", "shell_exec",
+    }
+    assert VALID_PERMISSIONS == expected
+
+
+def test_validate_permissions_all_valid():
+    assert validate_permissions(["web_requests", "file_read"]) == []
+
+
+def test_validate_permissions_returns_invalid():
+    result = validate_permissions(["web_requests", "fly_to_moon"])
+    assert result == ["fly_to_moon"]
+
+
+def test_load_permissions_empty(tmp_path: Path):
+    perms = load_permissions(tmp_path / "agent_permissions.toml")
+    assert perms == {}
+
+
+def test_save_and_load_permissions(tmp_path: Path):
+    path = tmp_path / "agent_permissions.toml"
+    data = {
+        "scout": {
+            "approved": True,
+            "permissions": ["web_requests"],
+            "approved_at": "2026-04-16T12:00:00Z",
+        }
+    }
+    save_permissions(path, data)
+    loaded = load_permissions(path)
+    assert loaded["scout"]["approved"] is True
+
+
+def test_is_approved(tmp_path: Path):
+    path = tmp_path / "agent_permissions.toml"
+    data = {
+        "scout": {"approved": True, "permissions": ["web_requests"]},
+        "shady": {"approved": False, "permissions": ["shell_exec"]},
+    }
+    save_permissions(path, data)
+    perms = load_permissions(path)
+    assert is_approved(perms, "scout") is True
+    assert is_approved(perms, "shady") is False
+    assert is_approved(perms, "unknown") is False
+
+
+def test_approve_agent(tmp_path: Path):
+    path = tmp_path / "agent_permissions.toml"
+    data = {"pending": {"approved": False, "permissions": ["web_requests"]}}
+    save_permissions(path, data)
+    approve_agent(path, "pending")
+    loaded = load_permissions(path)
+    assert loaded["pending"]["approved"] is True
+    assert "approved_at" in loaded["pending"]
