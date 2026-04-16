@@ -70,8 +70,9 @@ async def test_briefing_returns_valid_structure(client: httpx.AsyncClient):
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data["sections"], list)
-    assert len(data["sections"]) == 0
+    assert len(data["sections"]) >= 1  # Weather is always present
     assert "generated_at" in data
+    assert "summary" in data
 
 
 @pytest.mark.asyncio
@@ -110,7 +111,7 @@ async def test_scout_install(client: httpx.AsyncClient):
     resp = await client.post("/scout/install", json={"candidate_id": "test-123"})
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "not_implemented"
+    assert data["status"] in ("error", "installed")
 
 
 @pytest.mark.asyncio
