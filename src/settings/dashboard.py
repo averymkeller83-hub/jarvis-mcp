@@ -95,6 +95,18 @@ _TEMPLATE = r"""<!DOCTYPE html>
   <button class="btn btn-primary" onclick="saveSection('behavior')">Save Behavior</button>
 </div>
 
+<!-- Communication -->
+<div class="card" id="sec-comm">
+  <div class="section-title">Communication Channels</div>
+  <p class="text-sm text-slate-400 mb-3">How should JARVIS reach you?</p>
+  <div class="mb-3">
+    <label>Primary Channel</label>
+    <select id="comm-primary"></select>
+  </div>
+  <div id="comm-channels" class="space-y-2 mb-4"></div>
+  <button class="btn btn-primary" onclick="saveCommunication()">Save Channels</button>
+</div>
+
 <!-- Scout Sources -->
 <div class="card" id="sec-scout">
   <div class="section-title">Scout Sources</div>
@@ -184,6 +196,41 @@ setToggle('pr-local',S.privacy?.local_only);
 document.getElementById('br-time').value=S.briefing?.time||'07:00';
 document.getElementById('br-tz').value=S.briefing?.timezone||'';
 
+// Communication channels — safe DOM construction
+(function(){
+  var allCh=['imessage','telegram','discord','slack','email','macos_notifications'];
+  var labels={'imessage':'iMessage','telegram':'Telegram','discord':'Discord',
+    'slack':'Slack','email':'Email','macos_notifications':'macOS Notifications'};
+  var comm=S.communication?.channels||{};
+  var enabled=comm.enabled||['macos_notifications'];
+  var primary=comm.primary||'macos_notifications';
+  var container=document.getElementById('comm-channels');
+  var sel=document.getElementById('comm-primary');
+  allCh.forEach(function(ch){
+    var row=document.createElement('div');row.className='flex items-center gap-2';
+    var cb=document.createElement('input');cb.type='checkbox';cb.setAttribute('data-comm-ch',ch);
+    if(enabled.indexOf(ch)!==-1)cb.checked=true;
+    cb.onchange=function(){updateCommPrimary()};
+    var lbl=document.createElement('span');lbl.className='text-sm text-slate-300';
+    lbl.textContent=labels[ch]||ch;
+    row.appendChild(cb);row.appendChild(lbl);container.appendChild(row);
+    var opt=document.createElement('option');opt.value=ch;opt.textContent=labels[ch]||ch;
+    if(ch===primary)opt.selected=true;
+    sel.appendChild(opt);
+  });
+  function updateCommPrimary(){
+    var checked=[];
+    document.querySelectorAll('[data-comm-ch]').forEach(function(c){if(c.checked)checked.push(c.getAttribute('data-comm-ch'))});
+    var cur=sel.value;
+    sel.innerHTML='';
+    checked.forEach(function(ch){
+      var opt=document.createElement('option');opt.value=ch;opt.textContent=labels[ch]||ch;
+      if(ch===cur)opt.selected=true;
+      sel.appendChild(opt);
+    });
+  }
+})();
+
 // Scout sources — safe DOM construction
 (function(){
   var sl=document.getElementById('scout-list');
@@ -262,6 +309,17 @@ async function saveSection(section){
   else if(section==='privacy')body={telemetry_enabled:isOn(document.getElementById('pr-tele')),
     local_only:isOn(document.getElementById('pr-local')),auto_delete_logs_days:30};
   var r=await fetch('/settings/'+section,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(r.ok)toast();else toast('Error saving');
+}
+
+async function saveCommunication(){
+  var enabled=[];
+  document.querySelectorAll('[data-comm-ch]').forEach(function(cb){
+    if(cb.checked)enabled.push(cb.getAttribute('data-comm-ch'));
+  });
+  var primary=document.getElementById('comm-primary').value;
+  var body={channels:{primary:primary,enabled:enabled}};
+  var r=await fetch('/settings/communication',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(r.ok)toast();else toast('Error saving');
 }
 

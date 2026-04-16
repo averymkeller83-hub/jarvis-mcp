@@ -42,6 +42,10 @@ async def compose_briefing(config: dict | None = None) -> Briefing:
     github_repos = cfg.get("github_repos", [])
     include_lessons = cfg.get("include_lessons_digest", False)
     lesson_store = cfg.get("lesson_store")
+    hn_enabled = cfg.get("hn_enabled", True)
+    hn_limit = cfg.get("hn_limit", 5)
+    hn_min_score = cfg.get("hn_min_score", 100)
+    rss_urls = cfg.get("rss_urls", [])
 
     # Fetch in spec order: Weather → Calendar → Email → GitHub → News
     #   → Reminders → Scout Discover → Lessons Digest
@@ -50,7 +54,12 @@ async def compose_briefing(config: dict | None = None) -> Briefing:
         await fetch_calendar(),
         await fetch_email(),
         await fetch_github(github_repos),
-        await fetch_news(),
+        await fetch_news(
+            rss_urls=rss_urls,
+            hn_enabled=hn_enabled,
+            hn_limit=hn_limit,
+            hn_min_score=hn_min_score,
+        ),
         await fetch_reminders(),
         await fetch_scout_discover(),
     ]

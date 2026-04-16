@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -82,12 +88,62 @@ async def fetch_weather(
 
 
 async def fetch_calendar() -> BriefingSection:
-    """Return today's calendar events.
+    """Return today's calendar events via AppleScript.
 
-    Returns empty when no events are found.
+    Returns empty when no events are found or Calendar.app is unavailable.
     """
-    # Placeholder — will integrate with Apple Calendar MCP later.
-    return BriefingSection(title="Calendar", empty=True)
+    script = '''
+tell application "Calendar"
+    set today to current date
+    set time of today to 0
+    set tomorrow to today + 1 * days
+    set output to ""
+    repeat with cal in calendars
+        repeat with evt in (every event of cal whose start date >= today and start date < tomorrow)
+            set evtStart to start date of evt
+            set h to hours of evtStart
+            set m to minutes of evtStart
+            set hStr to text -2 thru -1 of ("0" & h)
+            set mStr to text -2 thru -1 of ("0" & m)
+            set output to output & hStr & ":" & mStr & " | " & summary of evt & linefeed
+        end repeat
+    end repeat
+    return output
+end tell
+'''
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["osascript", "-e", script],
+            capture_output=True, text=True, timeout=10,
+        )
+        raw = result.stdout.strip()
+        if not raw:
+            return BriefingSection(title="Calendar", empty=True)
+
+        events: list[dict] = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line or "|" not in line:
+                continue
+            parts = line.split("|", 1)
+            time_str = parts[0].strip()
+            title = parts[1].strip() if len(parts) > 1 else ""
+            events.append({"time": time_str, "title": title})
+
+        if not events:
+            return BriefingSection(title="Calendar", empty=True)
+
+        content = f"{len(events)} event(s) today."
+        return BriefingSection(
+            title="Calendar",
+            content=content,
+            items=events,
+            empty=False,
+        )
+    except Exception:
+        logger.debug("Calendar fetch failed", exc_info=True)
+        return BriefingSection(title="Calendar", empty=True)
 
 
 # ── Email ────────────────────────────────────────────────────────────
@@ -217,11 +273,57 @@ async def fetch_news(
 
 
 async def fetch_reminders() -> BriefingSection:
-    """Return pending reminders.
+    """Return pending (incomplete) reminders via AppleScript.
 
-    Returns empty when there are none.
+    Returns empty when there are none or Reminders.app is unavailable.
     """
-    return BriefingSection(title="Reminders", empty=True)
+    script = '''
+tell application "Reminders"
+    set output to ""
+    repeat with rem in (every reminder whose completed is false)
+        set dueStr to ""
+        try
+            set d to due date of rem
+            set dueStr to short date string of d
+        end try
+        set output to output & name of rem & " | " & dueStr & linefeed
+    end repeat
+    return output
+end tell
+'''
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["osascript", "-e", script],
+            capture_output=True, text=True, timeout=10,
+        )
+        raw = result.stdout.strip()
+        if not raw:
+            return BriefingSection(title="Reminders", empty=True)
+
+        items: list[dict] = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("|", 1)
+            name = parts[0].strip()
+            due = parts[1].strip() if len(parts) > 1 else ""
+            items.append({"name": name, "due": due})
+
+        if not items:
+            return BriefingSection(title="Reminders", empty=True)
+
+        content = f"{len(items)} pending reminder(s)."
+        return BriefingSection(
+            title="Reminders",
+            content=content,
+            items=items,
+            empty=False,
+        )
+    except Exception:
+        logger.debug("Reminders fetch failed", exc_info=True)
+        return BriefingSection(title="Reminders", empty=True)
 
 
 # ── Scout Discover ───────────────────────────────────────────────────
