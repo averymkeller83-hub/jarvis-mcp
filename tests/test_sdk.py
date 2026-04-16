@@ -386,3 +386,113 @@ def test_discover_agents_multiple_dirs(tmp_path: Path):
     agents = discover_agents([dir_a, dir_b])
     names = {a.config.name for a in agents}
     assert names == {"a", "b"}
+
+
+# ── AgentManager ────────────────────────────────────────────────────
+
+from src.sdk.manager import AgentManager
+from src.engine.scheduler import ProactiveEngine
+
+
+@pytest.fixture
+def manager(tmp_path: Path) -> AgentManager:
+    engine = ProactiveEngine()
+    return AgentManager(
+        engine=engine,
+        config_dir=tmp_path,
+        builtin_dir=None,
+        user_dir=None,
+    )
+
+
+def test_manager_register_agent(manager: AgentManager):
+    agent = DummyAgent()
+    manager.register(agent, builtin=True)
+    assert "dummy" in manager.agents
+    assert manager.states["dummy"] == "running"
+
+
+def test_manager_register_user_agent_pending(manager: AgentManager):
+    agent = DummyAgent()
+    manager.register(agent, builtin=False)
+    assert manager.states["dummy"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_manager_approve_agent(manager: AgentManager):
+    agent = DummyAgent()
+    manager.register(agent, builtin=False)
+    assert manager.states["dummy"] == "pending"
+    await manager.approve("dummy")
+    assert manager.states["dummy"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_manager_stop_and_start(manager: AgentManager):
+    agent = DummyAgent()
+    manager.register(agent, builtin=True)
+    await manager.stop_agent("dummy")
+    assert manager.states["dummy"] == "stopped"
+    await manager.start_agent("dummy")
+    assert manager.states["dummy"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_manager_invoke_user_triggered(manager: AgentManager):
+    agent = DummyAgent()
+    manager.register(agent, builtin=True)
+    result = await manager.invoke("dummy", {"hello": "world"})
+    assert result["params"] == {"hello": "world"}
+
+
+@pytest.mark.asyncio
+async def test_manager_invoke_unknown_agent(manager: AgentManager):
+    result = await manager.invoke("nonexistent", {})
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_manager_invoke_pending_agent(manager: AgentManager):
+    agent = DummyAgent()
+    manager.register(agent, builtin=False)
+    result = await manager.invoke("dummy", {})
+    assert "error" in result
+
+
+def test_manager_list_agents(manager: AgentManager):
+    agent = DummyAgent()
+    manager.register(agent, builtin=True)
+    listing = manager.list_agents()
+    assert len(listing) == 1
+    assert listing[0]["name"] == "dummy"
+    assert listing[0]["status"] == "running"
+
+
+def test_manager_get_agent_detail(manager: AgentManager):
+    agent = DummyAgent()
+    manager.register(agent, builtin=True)
+    detail = manager.get_agent("dummy")
+    assert detail is not None
+    assert detail["name"] == "dummy"
+    assert detail["permissions"] == ["web_requests"]
+
+
+def test_manager_get_unknown_agent(manager: AgentManager):
+    assert manager.get_agent("nope") is None
+
+
+@pytest.mark.asyncio
+async def test_manager_scheduled_trigger_registered(manager: AgentManager):
+    agent = DummyAgent()
+    manager.register(agent, builtin=True)
+    schedule = manager.engine.get_schedule()
+    agent_tasks = [t for t in schedule if t["name"] == "agent:dummy"]
+    assert len(agent_tasks) == 1
+
+
+@pytest.mark.asyncio
+async def test_manager_event_trigger_subscribed(manager: AgentManager):
+    agent = DummyAgent()
+    manager.register(agent, builtin=True)
+    subs = manager.event_bus.list_subscriptions()
+    assert "test_event" in subs
