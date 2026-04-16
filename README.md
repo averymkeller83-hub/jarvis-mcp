@@ -1,0 +1,133 @@
+# Jarvis MCP
+
+**An AI assistant that unifies Claude's intelligence with OS control, proactive tool discovery, and self-improvement — all in one conversation.**
+
+> *"What if Siri had Claude's brain, went hunting for tools you didn't know existed, and never made the same mistake twice?"*
+
+Free with any Claude subscription. Powered by Claude.
+
+---
+
+## What This Is
+
+An MCP server for Claude Desktop that turns Claude into a full AI assistant with four pillars:
+
+| Pillar | What It Does |
+|---|---|
+| **Brains** | Claude does the thinking — chat, reasoning, code, research, screen reading. Routes casual chat through Groq (free) by default, or your Claude sub if you prefer. |
+| **Hands** | Siri-style OS control — messages, calls, reminders, alarms, music, HomeKit, calendar. Works with Apple, Google Workspace, and Microsoft 365. |
+| **Scout** | Proactive discovery — finds MCP servers, plugins, and tools tailored to your stack. Sandbox-tests them before showing you. One-click install. |
+| **Lessons** | Self-improvement — learns from every correction, never repeats the same mistake. You approve every lesson before it's saved. |
+
+**One conversation. No mode switching.** You talk, the assistant figures out whether to think, act, discover, or remember — and handles it behind the scenes.
+
+## Quick Install
+
+```bash
+brew install --cask jarvis-mcp
+```
+
+First-run setup walks you through 12 steps (all skippable except welcome + Claude connection). Takes under 10 minutes.
+
+## What You Need
+
+- macOS (Apple Silicon recommended)
+- [Claude Desktop](https://claude.ai/download) with any subscription (Free, Pro, or Max)
+- That's it. Everything else is optional.
+
+## Architecture
+
+```
+Claude Desktop (your subscription)
+        │ MCP over stdio
+        ▼
+Jarvis MCP Extension (always works alone)
+  • Smart router    • Unified memory
+  • Screen reading  • Lessons read
+  • Workspace search
+        │ HTTPS auto-discover (127.0.0.1:7900)
+        ▼
+Jarvis Core Daemon (optional upgrade)
+  • FastAPI server    • Voice pipeline
+  • Scout agent       • Briefings
+  • OS integrations   • Lessons write
+  • CONTROL actions
+```
+
+**Progressive enhancement:** The extension works standalone. Installing the optional Core daemon unlocks Hands, Scout, Lessons write, voice, and briefings. Each tier is a clean upgrade.
+
+## Features
+
+### Unified Chat
+Everything happens in one conversation. Ask a question, refactor code, text someone, check your calendar, discover a new tool — all in the same thread. The router silently picks the right handler.
+
+### Voice
+- **Listen:** Whisper.cpp (local, private) with cloud fallback
+- **Speak:** Fish Audio TTS with local phrase cache (instant on common phrases)
+- **Activate:** `⌥Space` hotkey or optional on-device wake word
+
+### Morning Briefing
+8-section daily briefing delivered to Obsidian + Telegram + voice:
+Weather → Calendar → Email → GitHub → News → Reminders → Scout Discover → Lessons Digest
+
+Empty sections are silently skipped. Light day = short briefing.
+
+### Services
+Supports Apple, Google Workspace, and Microsoft 365 simultaneously. Smart routing by contact — if David is in your Google Contacts, email goes through Gmail automatically.
+
+### Privacy
+- All data stays on your machine by default
+- Voice audio processed locally (cloud fallback only on low confidence)
+- Scout sources are opt-in — nothing scans until you say so
+- Optional anonymous telemetry (off by default, fully transparent)
+- One-command uninstall exports your data before removing everything
+
+## Personalization
+
+- Name the assistant anything you want
+- Pick what it calls you
+- Choose your voice profile
+- Configure notification routing per event type
+- Move CONTROL actions between instant-fire and confirm-first tiers
+- All settings available via menubar, web dashboard, or config files
+
+## Project Structure
+
+```
+src/
+  brain/       # Router, classification, model routing
+  hands/       # CONTROL surface, AppleScript, OS integrations
+  scout/       # Source scanning, sandbox testing, scoring, cards
+  lessons/     # Capture, approval, retrieval, pruning
+  voice/       # STT (Whisper), TTS (Fish Audio), activation
+  briefing/    # Composer, Obsidian writer, delivery
+  integrations/  # Apple, Google, Microsoft service connectors
+config/        # Example TOML configs (user copies and customizes)
+docs/specs/    # Locked v1 spec (550+ lines, 30+ decisions)
+tests/         # Test suite
+scripts/       # Utility scripts
+```
+
+## Status
+
+**v1 spec is locked.** Implementation starting. See [`docs/specs/2026-04-15-jarvis-v1-north-star.md`](docs/specs/2026-04-15-jarvis-v1-north-star.md) for the complete spec.
+
+### Roadmap
+
+| Phase | Scope | Status |
+|---|---|---|
+| v1 — Mac Core | Extension + daemon + Hands + Scout + Lessons + voice + briefings | Building |
+| v2 — Phone Reach | "Hey Siri, Jarvis..." + relay server + AirPods + CarPlay | Planned |
+| v3 — Native iOS | iOS app + Watch + tap-to-talk | Planned |
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## License
+
+Apache 2.0 — see [LICENSE](LICENSE).
+
+---
+
+*Powered by [Claude](https://claude.ai) by Anthropic.*

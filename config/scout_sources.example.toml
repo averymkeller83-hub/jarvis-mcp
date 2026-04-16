@@ -1,0 +1,52 @@
+# Scout Sources Configuration
+# Copy to scout_sources.toml — user selects at setup
+
+# Recommended (pre-checked at setup)
+[sources.anthropic_changelog]
+enabled = false
+cadence = "hourly"
+description = "New Claude capabilities the moment they ship so you're never on stale patterns"
+
+[sources.claude_plugin_marketplace]
+enabled = false
+cadence = "daily"
+description = "Tools Anthropic itself has vetted"
+
+[sources.mcp_registry]
+enabled = false
+cadence = "daily"
+urls = ["https://glama.ai", "https://mcp.so"]
+description = "New MCP servers I can wire into your stack"
+
+[sources.github_repos]
+enabled = false
+cadence = "hourly"
+description = "Stale branches, failing CI, new issues I should flag"
+
+# Optional (unchecked at setup)
+[sources.github_trending]
+enabled = false
+cadence = "daily"
+languages = []  # Filtered by user's stack, detected at setup
+description = "What builders in your language are shipping"
+
+[sources.rss_curated]
+enabled = false
+cadence = "daily"
+feeds = [
+    "https://simonwillison.net/atom/everything/",
+    "https://tldr.tech/ai/rss",
+]
+description = "Deep-cut writeups from people you'd read anyway"
+
+[sources.hackernews]
+enabled = false
+cadence = "daily"
+min_score = 100
+description = "Raw firehose — high noise, occasional gold"
+
+[sources.custom_rss]
+enabled = false
+cadence = "daily"
+feeds = []  # User pastes URLs at setup or in settings
+description = "Your own RSS/Atom feeds"

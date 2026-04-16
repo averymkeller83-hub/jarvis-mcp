@@ -1,0 +1,15 @@
+# Personality Configuration
+# Copy to personality.toml and customize
+
+[identity]
+assistant_name = "Assistant"          # What the assistant calls itself (user sets at setup)
+user_display_name = ""                # What the assistant calls the user (detected from macOS or set at setup)
+
+[voice]
+profile = "default"                   # Voice profile for TTS (default, warm, professional)
+wake_word_enabled = false             # Enable on-device wake word listening
+hotkey = "alt+space"                  # Keyboard shortcut for voice activation
+
+[behavior]
+use_claude_for_chat = false           # true = route all chat through Claude; false = use Groq (free)
+do_not_disturb = false                # Pause all notifications and Telegram pushes

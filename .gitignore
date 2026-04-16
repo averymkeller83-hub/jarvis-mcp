@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+credentials.json
+
+# Logs
+logs/
+*.log
+
+# Cache
+cache/
+.cache/
+
+# TTS phrase cache (regenerated at setup)
+cache/tts/
+
+# Scout sandbox artifacts
+sandbox/
+
+# Memory (user-specific, not committed)
+memory/lessons.md
+memory/lessons_archive.md
+memory/lessons_rejected.jsonl
+memory/scout_signals.jsonl
+
+# Config (user-specific, templates committed instead)
+config/personality.toml
+config/contacts_nicknames.toml
+config/control_tiers.toml
+config/scout_sources.toml
+config/voice_profile.json
+
+# MLX model downloads
+models/
