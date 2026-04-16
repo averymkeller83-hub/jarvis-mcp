@@ -45,6 +45,7 @@ from src.setup.engine import (
     start_setup,
 )
 from src.setup.steps import SetupState
+from src.sdk.manager import AgentManager
 from src.voice.activation import ActivationConfig, VoiceActivation
 from src.voice.pipeline import voice_roundtrip
 from src.voice.stt import transcribe
@@ -56,13 +57,26 @@ _start_time: float = 0.0
 _setup_state: SetupState | None = None
 _voice_activation = VoiceActivation(ActivationConfig())
 _engine = ProactiveEngine()
+_agent_manager: AgentManager | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _start_time
+    global _start_time, _agent_manager
     _start_time = time.monotonic()
     register_default_tasks(_engine)
+
+    # Initialize agent manager
+    from pathlib import Path
+    project_root = Path(__file__).resolve().parent.parent.parent
+    _agent_manager = AgentManager(
+        engine=_engine,
+        config_dir=project_root / "config",
+        builtin_dir=project_root / "src" / "agents",
+        user_dir=project_root / "agents",
+    )
+    await _agent_manager.discover_and_register()
+
     await _engine.start()
     yield
     await _engine.stop()
@@ -138,6 +152,20 @@ async def health() -> dict[str, Any]:
 
 @app.get("/status")
 async def status() -> dict[str, Any]:
+    agent_info = {}
+    if _agent_manager is not None:
+        listing = _agent_manager.list_agents()
+        running = sum(1 for a in listing if a["status"] == "running")
+        pending = sum(1 for a in listing if a["status"] == "pending")
+        agent_info = {
+            "agents": "available",
+            "agent_count": len(listing),
+            "agents_running": running,
+            "agents_pending": pending,
+        }
+    else:
+        agent_info = {"agents": "unavailable"}
+
     return {
         "daemon": "running",
         "services": {
@@ -149,6 +177,7 @@ async def status() -> dict[str, Any]:
             "voice": "available",
             "setup": "available",
             "engine": "available",
+            **agent_info,
         },
     }
 
@@ -399,6 +428,94 @@ async def engine_start() -> dict[str, str]:
 async def engine_stop() -> dict[str, str]:
     await _engine.stop()
     return {"status": "stopped"}
+
+
+# ── Agent endpoints ────────────────────────────────────────────────
+
+
+class AgentRunRequest(BaseModel):
+    params: dict = {}
+
+
+@app.get("/agents")
+async def agents_list() -> dict[str, Any]:
+    if _agent_manager is None:
+        return {"agents": [], "count": 0}
+    listing = _agent_manager.list_agents()
+    return {"agents": listing, "count": len(listing)}
+
+
+@app.get("/agents/{name}")
+async def agents_detail(name: str) -> dict[str, Any]:
+    from fastapi.responses import JSONResponse
+
+    if _agent_manager is None:
+        return JSONResponse(status_code=404, content={"error": "Agent manager not initialized"})
+    detail = _agent_manager.get_agent(name)
+    if detail is None:
+        return JSONResponse(status_code=404, content={"error": f"Agent '{name}' not found"})
+    return detail
+
+
+@app.post("/agents/{name}/run")
+async def agents_run(name: str, body: AgentRunRequest) -> dict[str, Any]:
+    from fastapi.responses import JSONResponse
+
+    if _agent_manager is None:
+        return JSONResponse(status_code=503, content={"error": "Agent manager not initialized"})
+    result = await _agent_manager.invoke(name, body.params)
+    if "error" in result:
+        return JSONResponse(status_code=400, content=result)
+    return result
+
+
+@app.put("/agents/{name}/approve")
+async def agents_approve(name: str) -> dict[str, Any]:
+    from fastapi.responses import JSONResponse
+
+    if _agent_manager is None:
+        return JSONResponse(status_code=503, content={"error": "Agent manager not initialized"})
+    await _agent_manager.approve(name)
+    return {"success": True, "agent": name, "status": "running"}
+
+
+@app.post("/agents/{name}/stop")
+async def agents_stop(name: str) -> dict[str, Any]:
+    if _agent_manager is None:
+        return {"error": "Agent manager not initialized"}
+    await _agent_manager.stop_agent(name)
+    return {"success": True, "agent": name, "status": "stopped"}
+
+
+@app.post("/agents/{name}/start")
+async def agents_start(name: str) -> dict[str, Any]:
+    if _agent_manager is None:
+        return {"error": "Agent manager not initialized"}
+    await _agent_manager.start_agent(name)
+    return {"success": True, "agent": name, "status": "running"}
+
+
+@app.get("/agents/{name}/context")
+async def agents_context(name: str) -> dict[str, Any]:
+    from fastapi.responses import JSONResponse
+
+    if _agent_manager is None:
+        return JSONResponse(status_code=503, content={"error": "Agent manager not initialized"})
+    agent = _agent_manager.agents.get(name)
+    if agent is None:
+        return JSONResponse(status_code=404, content={"error": f"Agent '{name}' not found"})
+    keys = await _agent_manager._context.list(prefix=f"{name}.")
+    data = {}
+    for key in keys:
+        data[key] = await _agent_manager._context.get(key)
+    return data
+
+
+@app.get("/events")
+async def events_list() -> dict[str, Any]:
+    if _agent_manager is None:
+        return {"subscriptions": {}}
+    return {"subscriptions": _agent_manager.event_bus.list_subscriptions()}
 
 
 # ── Voice endpoints ─────────────────────────────────────────────────

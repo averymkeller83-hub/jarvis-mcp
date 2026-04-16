@@ -117,3 +117,70 @@ async def test_scout_agent_user_invoked(bus, ctx):
         result = await agent.run_now({})
 
     assert result["finds_count"] == 0
+
+
+# ── API Tests ───────────────────────────────────────────────────────
+
+import httpx
+from httpx import ASGITransport
+
+from src.server.app import app
+
+
+@pytest.fixture
+def client():
+    transport = ASGITransport(app=app)
+    return httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:7900")
+
+
+@pytest.mark.asyncio
+async def test_get_agents(client: httpx.AsyncClient):
+    resp = await client.get("/agents")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data["agents"], list)
+    assert "count" in data
+
+
+@pytest.mark.asyncio
+async def test_get_agent_detail(client: httpx.AsyncClient):
+    resp = await client.get("/agents")
+    agents = resp.json()["agents"]
+    if agents:
+        name = agents[0]["name"]
+        resp = await client.get(f"/agents/{name}")
+        assert resp.status_code == 200
+        assert resp.json()["name"] == name
+
+
+@pytest.mark.asyncio
+async def test_get_agent_not_found(client: httpx.AsyncClient):
+    resp = await client.get("/agents/nonexistent_agent_xyz")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_agent_context(client: httpx.AsyncClient):
+    resp = await client.get("/agents")
+    agents = resp.json()["agents"]
+    if agents:
+        name = agents[0]["name"]
+        resp = await client.get(f"/agents/{name}/context")
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), dict)
+
+
+@pytest.mark.asyncio
+async def test_get_events(client: httpx.AsyncClient):
+    resp = await client.get("/events")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "subscriptions" in data
+
+
+@pytest.mark.asyncio
+async def test_status_includes_agents(client: httpx.AsyncClient):
+    resp = await client.get("/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "agents" in data["services"]

@@ -59,5 +59,8 @@ config/control_tiers.toml
 config/scout_sources.toml
 config/voice_profile.json
 
+# User-created agents
+agents/
+
 # MLX model downloads
 models/
