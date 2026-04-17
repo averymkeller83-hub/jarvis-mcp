@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jarvis-mcp.telegram-bot</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/python3</string>
+        <string>-m</string>
+        <string>src.telegram_bot</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/averykeller/Desktop/projects/jarvis-mcp</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/averykeller/Desktop/projects/jarvis-mcp/logs/telegram-bot.stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/averykeller/Desktop/projects/jarvis-mcp/logs/telegram-bot.stderr.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:/Users/averykeller/.npm-global/bin</string>
+        <key>PYTHONPATH</key>
+        <string>/Users/averykeller/Desktop/projects/jarvis-mcp</string>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>

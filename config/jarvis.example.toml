@@ -1,0 +1,18 @@
+# JARVIS Core Configuration
+# Copy to jarvis.toml and customize
+
+setup_complete = false
+
+[personality]
+user_display_name = "Sir"             # What JARVIS calls you
+assistant_name = "JARVIS"             # The assistant's name
+
+[location]
+name = "Bloomington, IN"
+latitude = 39.1653
+longitude = -86.5264
+
+[voice]
+enabled = false                       # Start with voice narration off
+voice_name = "Daniel"                 # macOS TTS voice (Daniel, Samantha, Alex, etc.)
+                                      # Toggle at runtime with enable_voice_mode / disable_voice_mode

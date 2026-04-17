@@ -371,14 +371,11 @@ async def fetch_scout_discover() -> BriefingSection:
     Runs the real Scout discovery pipeline and returns top results.
     """
     try:
-        from src.scout.engine import run_discovery
         from src.scout.cards import card_to_dict
+        from src.scout.context import build_user_context
+        from src.scout.engine import run_discovery
 
-        user_context = {
-            "stack": ["python", "fastapi", "react", "typescript", "mcp", "claude", "ai", "agent"],
-            "projects": ["jarvis", "magic-puffs", "clawwork", "sakura-radio"],
-            "recent_topics": ["mcp", "dashboard", "scout", "voice", "tts", "integration"],
-        }
+        user_context = build_user_context()
         cards = await run_discovery(user_context=user_context)
         if not cards:
             return BriefingSection(title="Scout Discover", empty=True)

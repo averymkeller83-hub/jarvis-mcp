@@ -10,8 +10,15 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Ensure the project root is on sys.path so `from src.xxx` imports work
+# regardless of how/where this script is launched.
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 import toml
 from mcp.server.fastmcp import FastMCP
@@ -442,13 +449,10 @@ async def open_app(app_name: str) -> str:
 @mcp.tool()
 async def run_scout() -> str:
     """Run a Scout discovery scan — finds relevant tools, repos, and news for your stack."""
+    from src.scout.context import build_user_context
     from src.scout.engine import run_discovery
 
-    user_context = {
-        "stack": ["python", "fastapi", "react", "typescript", "mcp", "claude", "ai", "agent"],
-        "projects": ["jarvis", "magic-puffs", "clawwork", "sakura-radio", "chess-agent"],
-        "recent_topics": ["mcp", "dashboard", "scout", "voice", "tts", "integration"],
-    }
+    user_context = build_user_context()
     cards = await run_discovery(user_context=user_context)
     if not cards:
         return "Scout found nothing new."
@@ -885,6 +889,121 @@ async def check_background_agent(agent_id: str = "") -> str:
         status_icon = {"running": "...", "completed": "done", "failed": "FAIL", "timed_out": "TIMEOUT"}.get(agent["status"], "?")
         lines.append(f"• [{aid}] {status_icon} — {agent['task'][:60]}")
     return "\n".join(lines)
+
+
+# ── Voice Mode ─────────────────────────────────────────────────────
+
+# Runtime flag — NOT persisted to config file.
+_voice_mode_enabled: bool = False
+_voice_mode_voice: str = "Daniel"
+
+
+def _init_voice_mode() -> None:
+    """Seed voice-mode defaults from jarvis.toml [voice] section."""
+    global _voice_mode_enabled, _voice_mode_voice
+    cfg = _load_config().get("voice", {})
+    _voice_mode_enabled = bool(cfg.get("enabled", False))
+    _voice_mode_voice = cfg.get("voice_name", "Daniel")
+
+
+# Run once at import time so the flag matches the config on startup.
+_init_voice_mode()
+
+
+@mcp.tool()
+async def enable_voice_mode(voice: str = "") -> str:
+    """Turn on JARVIS voice narration. All jarvis_say calls will speak aloud.
+
+    Args:
+        voice: Optional macOS voice name to use (e.g. Daniel, Samantha, Alex).
+               Defaults to the voice set in jarvis.toml or "Daniel".
+    """
+    global _voice_mode_enabled, _voice_mode_voice
+    _voice_mode_enabled = True
+    if voice:
+        _voice_mode_voice = voice
+    return f"Voice mode enabled (voice: {_voice_mode_voice}). I'll narrate my responses, sir."
+
+
+@mcp.tool()
+async def disable_voice_mode() -> str:
+    """Turn off JARVIS voice narration."""
+    global _voice_mode_enabled
+    _voice_mode_enabled = False
+    return "Voice mode disabled. Back to the quiet life."
+
+
+@mcp.tool()
+async def jarvis_say(text: str) -> str:
+    """JARVIS narrates a response — speaks it aloud (if voice mode is on) AND returns the text.
+
+    Use this instead of `speak` when JARVIS is narrating his own responses.
+    Unlike `speak`, this always returns the text (for display) and only
+    invokes TTS when voice mode is enabled.
+
+    Args:
+        text: The text JARVIS should narrate.
+    """
+    if _voice_mode_enabled:
+        proc = await asyncio.create_subprocess_exec(
+            "say", "-v", _voice_mode_voice, text,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        if proc.returncode != 0:
+            return f"{text}\n\n(TTS error: {stderr.decode().strip()})"
+    return text
+
+
+# ── Clipboard ───────────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def get_clipboard() -> str:
+    """Get the current contents of the macOS clipboard."""
+    proc = await asyncio.create_subprocess_exec(
+        "pbpaste",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+    text = stdout.decode()
+    if not text:
+        return "Clipboard is empty."
+    return f"Clipboard contents:\n{text[:2000]}"
+
+
+@mcp.tool()
+async def set_clipboard(text: str) -> str:
+    """Copy text to the macOS clipboard."""
+    proc = await asyncio.create_subprocess_exec(
+        "pbcopy",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    await asyncio.wait_for(proc.communicate(input=text.encode()), timeout=5)
+    if proc.returncode == 0:
+        return f"Copied to clipboard ({len(text)} chars)."
+    return "Failed to copy to clipboard."
+
+
+# ── URL Opening ─────────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def open_url(url: str) -> str:
+    """Open a URL in the default browser."""
+    proc = await asyncio.create_subprocess_exec(
+        "open", url,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+    if proc.returncode == 0:
+        return f"Opened: {url}"
+    return f"Failed to open URL: {stderr.decode()}"
 
 
 # ── Run ─────────────────────────────────────────────────────────────
