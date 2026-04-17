@@ -6,22 +6,44 @@ When False (default), returns mock results to preserve test behaviour.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import toml
+
 from src.hands import ControlResult
 from src.hands.osascript import check_app_running, launch_app, run_osascript
 
 # ── Live-mode toggle ─────────────────────────────────────────────────
-# Set to True to actually execute AppleScript.  False keeps mock behaviour.
-_LIVE_MODE: bool = False
+_CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
+
+
+def _is_live_mode() -> bool:
+    """Check if iMessage live mode is enabled via communication.toml."""
+    comm_path = _CONFIG_DIR / "communication.toml"
+    if not comm_path.exists():
+        return False
+    try:
+        data = toml.load(comm_path)
+        enabled = data.get("channels", {}).get("enabled", [])
+        return "imessage" in enabled
+    except Exception:
+        return False
 
 
 def _build_imessage_script(target: str, message: str) -> str:
-    """Return the AppleScript that would send an iMessage."""
-    escaped_msg = message.replace('"', '\\"')
+    """Return the AppleScript that would send an iMessage.
+
+    Uses the modern approach: iterate services to find the buddy by handle,
+    which works on macOS Ventura+ where service names are not fixed.
+    """
+    escaped_msg = message.replace('"', '\\"').replace("\n", "\\n")
+    escaped_target = target.replace('"', '\\"')
     return (
         'tell application "Messages"\n'
-        f'    set targetBuddy to buddy "{target}" of service "iMessage"\n'
+        '    set targetService to 1st service whose service type = iMessage\n'
+        f'    set targetBuddy to buddy "{escaped_target}" of targetService\n'
         f'    send "{escaped_msg}" to targetBuddy\n'
-        "end tell"
+        'end tell'
     )
 
 
@@ -42,15 +64,23 @@ async def _ensure_messages_app() -> bool:
     return await check_app_running("Messages")
 
 
+def _normalize_phone(target: str) -> str:
+    """Strip spaces, dashes, parens from phone numbers for iMessage lookup."""
+    if target.startswith("+") or target[0:1].isdigit():
+        return "".join(c for c in target if c.isdigit() or c == "+")
+    return target
+
+
 async def send_imessage(target: str, message: str) -> ControlResult:
     """Send an iMessage to *target*.
 
     In mock mode, returns a preview without executing.
     In live mode, launches Messages.app if needed and sends via osascript.
     """
+    target = _normalize_phone(target)
     script = _build_imessage_script(target, message)
 
-    if not _LIVE_MODE:
+    if not _is_live_mode():
         return ControlResult(
             success=True,
             message=f"[mock] iMessage to {target}: '{message}' | script: {script}",
@@ -99,10 +129,77 @@ async def send_imessage(target: str, message: str) -> ControlResult:
 
 
 async def send_telegram(target: str, message: str) -> ControlResult:
-    """Placeholder for Telegram bot API — returns mock success."""
+    """Send via Telegram using the real backend if configured, else mock."""
+    comm_path = _CONFIG_DIR / "communication.toml"
+    if comm_path.exists():
+        try:
+            data = toml.load(comm_path)
+            tg_conf = data.get("telegram", {})
+            if tg_conf.get("bot_token") and tg_conf.get("chat_id"):
+                from src.hands.telegram import send as tg_send
+
+                result = await tg_send(tg_conf, message)
+                return ControlResult(
+                    success=result.success,
+                    message=result.message,
+                    action="message",
+                    confirmed=True,
+                )
+        except Exception:
+            pass
     return ControlResult(
         success=True,
         message=f"[mock] Telegram to {target}: '{message}'",
         action="message",
         confirmed=True,
     )
+
+
+# ── iMessage polling ────────────────────────────────────────────────
+
+async def poll_imessage(since_rowid: int = 0) -> tuple[list, int]:
+    """Poll ~/Library/Messages/chat.db for new messages.
+
+    Returns (list[IncomingMessage], latest_rowid).
+    """
+    import asyncio
+    import sqlite3
+    from datetime import datetime, timezone
+
+    from src.hands.types import IncomingMessage
+
+    db_path = Path.home() / "Library" / "Messages" / "chat.db"
+    if not db_path.exists():
+        return [], since_rowid
+
+    def _query():
+        messages = []
+        latest = since_rowid
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT m.ROWID, m.text, m.is_from_me, m.date, h.id as handle_id "
+                "FROM message m "
+                "LEFT JOIN handle h ON m.handle_id = h.ROWID "
+                "WHERE m.ROWID > ? AND m.is_from_me = 0 AND m.text IS NOT NULL "
+                "ORDER BY m.ROWID",
+                (since_rowid,),
+            )
+            for row in cursor:
+                messages.append(
+                    IncomingMessage(
+                        text=row["text"],
+                        sender=row["handle_id"] or "unknown",
+                        channel="imessage",
+                        timestamp=datetime.now(timezone.utc),
+                        raw={"rowid": row["ROWID"]},
+                    )
+                )
+                latest = max(latest, row["ROWID"])
+            conn.close()
+        except Exception:
+            pass
+        return messages, latest
+
+    return await asyncio.to_thread(_query)
