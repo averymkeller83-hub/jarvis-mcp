@@ -10,7 +10,7 @@ from src.hands import ControlResult
 from src.hands.osascript import check_app_running, launch_app, run_osascript
 
 # ── Live-mode toggle ─────────────────────────────────────────────────
-_LIVE_MODE: bool = False
+_LIVE_MODE: bool = True
 
 
 def _build_music_script(command: str) -> str:

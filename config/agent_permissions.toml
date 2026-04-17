@@ -1,0 +1,9 @@
+[briefing]
+approved = true
+permissions = [ "read_calendar", "read_reminders", "web_requests", "send_notifications",]
+approved_at = "2026-04-17T17:01:27.193111+00:00"
+
+[scout]
+approved = true
+permissions = [ "web_requests", "send_notifications",]
+approved_at = "2026-04-17T17:01:27.193933+00:00"

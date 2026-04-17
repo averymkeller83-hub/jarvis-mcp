@@ -130,26 +130,22 @@ async def send_imessage(target: str, message: str) -> ControlResult:
 
 async def send_telegram(target: str, message: str) -> ControlResult:
     """Send via Telegram using the real backend if configured, else mock."""
-    comm_path = _CONFIG_DIR / "communication.toml"
-    if comm_path.exists():
-        try:
-            data = toml.load(comm_path)
-            tg_conf = data.get("telegram", {})
-            if tg_conf.get("bot_token") and tg_conf.get("chat_id"):
-                from src.hands.telegram import send as tg_send
+    from src.security.vault import load_channel_config
 
-                result = await tg_send(tg_conf, message)
-                return ControlResult(
-                    success=result.success,
-                    message=result.message,
-                    action="message",
-                    confirmed=True,
-                )
-        except Exception:
-            pass
+    tg_conf = load_channel_config("telegram")
+    if tg_conf and tg_conf.get("bot_token") and tg_conf.get("chat_id"):
+        from src.hands.telegram import send as tg_send
+
+        result = await tg_send(tg_conf, message)
+        return ControlResult(
+            success=result.success,
+            message=result.message,
+            action="message",
+            confirmed=True,
+        )
     return ControlResult(
-        success=True,
-        message=f"[mock] Telegram to {target}: '{message}'",
+        success=False,
+        message=f"Telegram not configured — set bot_token and chat_id in communication.toml",
         action="message",
         confirmed=True,
     )
@@ -157,8 +153,28 @@ async def send_telegram(target: str, message: str) -> ControlResult:
 
 # ── iMessage polling ────────────────────────────────────────────────
 
+def _get_allowed_senders() -> set[str]:
+    """Load allowed iMessage senders from communication.toml.
+
+    Only messages from these handles are processed. Returns empty set to allow all.
+    """
+    comm_path = _CONFIG_DIR / "communication.toml"
+    if not comm_path.exists():
+        return set()
+    try:
+        data = toml.load(comm_path)
+        senders = data.get("imessage", {}).get("allowed_senders", [])
+        # Normalize phone numbers
+        return {_normalize_phone(s) if s[0:1] in ("+", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9") else s.lower() for s in senders}
+    except Exception:
+        return set()
+
+
 async def poll_imessage(since_rowid: int = 0) -> tuple[list, int]:
     """Poll ~/Library/Messages/chat.db for new messages.
+
+    Only returns messages from allowed_senders configured in communication.toml.
+    If no allowed_senders are configured, returns nothing (safe default).
 
     Returns (list[IncomingMessage], latest_rowid).
     """
@@ -170,6 +186,11 @@ async def poll_imessage(since_rowid: int = 0) -> tuple[list, int]:
 
     db_path = Path.home() / "Library" / "Messages" / "chat.db"
     if not db_path.exists():
+        return [], since_rowid
+
+    allowed = _get_allowed_senders()
+    if not allowed:
+        # No allowed senders configured — skip polling to avoid reading all messages
         return [], since_rowid
 
     def _query():
@@ -187,10 +208,16 @@ async def poll_imessage(since_rowid: int = 0) -> tuple[list, int]:
                 (since_rowid,),
             )
             for row in cursor:
+                handle = row["handle_id"] or ""
+                # Filter to allowed senders only
+                normalized = _normalize_phone(handle) if handle and handle[0:1] in ("+", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9") else handle.lower()
+                if normalized not in allowed:
+                    latest = max(latest, row["ROWID"])
+                    continue
                 messages.append(
                     IncomingMessage(
                         text=row["text"],
-                        sender=row["handle_id"] or "unknown",
+                        sender=handle,
                         channel="imessage",
                         timestamp=datetime.now(timezone.utc),
                         raw={"rowid": row["ROWID"]},

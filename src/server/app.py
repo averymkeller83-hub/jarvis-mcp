@@ -9,14 +9,14 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, FastAPI, Query
+from fastapi import APIRouter, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import FileResponse
 from pydantic import BaseModel
 
-from src.brain.router import classify, control_intent, local_intent
+from src.brain.router import Surface, classify, control_intent, local_intent
 from src.briefing.composer import compose_briefing
 from src.briefing.writer import write_to_obsidian
 from src.engine.scheduler import ProactiveEngine
@@ -50,6 +50,9 @@ from src.setup.engine import (
 from src.setup.steps import SetupState
 from src.sdk.manager import AgentManager
 from src.auth.routes import router as auth_router
+from src.security.ratelimit import RateLimiter, rate_limit
+
+_limiter = RateLimiter()
 from src.voice.activation import ActivationConfig, VoiceActivation
 from src.voice.pipeline import voice_roundtrip
 from src.voice.stt import transcribe
@@ -62,11 +65,31 @@ _setup_state: SetupState | None = None
 _voice_activation = VoiceActivation(ActivationConfig())
 _engine = ProactiveEngine()
 _agent_manager: AgentManager | None = None
+_message_listener = None
+
+
+async def _handle_incoming_message(text: str) -> str:
+    """Route incoming channel messages through the chat reply engine."""
+    from src.chat.reply import get_reply
+    from src.chat.store import append_message
+
+    append_message("user", text)
+    reply = await get_reply(text)
+    append_message("jarvis", reply)
+
+    if _agent_manager:
+        await _agent_manager.event_bus.emit(
+            "chat.incoming",
+            {"preview": text[:80], "channel": "listener"},
+            source="chat",
+        )
+
+    return reply
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _start_time, _agent_manager
+    global _start_time, _agent_manager, _message_listener
     _start_time = time.monotonic()
     register_default_tasks(_engine)
 
@@ -81,8 +104,16 @@ async def lifespan(app: FastAPI):
     )
     await _agent_manager.discover_and_register()
 
+    # Start two-way message listener for all enabled channels
+    from src.hands.listener import MessageListener
+    _message_listener = MessageListener(response_fn=_handle_incoming_message)
+    await _message_listener.start()
+
     await _engine.start()
     yield
+    # Shutdown
+    if _message_listener:
+        await _message_listener.stop()
     await _engine.stop()
 
 
@@ -133,6 +164,10 @@ class ScoutDismissRequest(BaseModel):
     reason: str | None = None
 
 
+class ChatRequest(BaseModel):
+    message: str
+
+
 class SetupStepRequest(BaseModel):
     config: dict = {}
 
@@ -180,8 +215,8 @@ async def status() -> dict[str, Any]:
         "daemon": "running",
         "services": {
             "router": "available",
-            "briefing": "placeholder",
-            "lessons": "placeholder",
+            "briefing": "available",
+            "lessons": "available",
             "scout": "available",
             "settings": "available",
             "voice": "available",
@@ -208,6 +243,12 @@ async def route(body: RouteRequest) -> RouteResponse:
 @app.post("/control/execute")
 async def control_execute(body: ControlExecuteRequest) -> dict[str, Any]:
     result = await execute_control(body.intent, confirmed=body.confirmed)
+    if _agent_manager:
+        await _agent_manager.event_bus.emit(
+            "control.executed",
+            {"action": result.action or "unknown", "success": result.success},
+            source="control",
+        )
     return {
         "success": result.success,
         "message": result.message,
@@ -240,11 +281,18 @@ async def briefing() -> dict[str, Any]:
         "hn_limit": news_cfg.get("hn_limit", 5),
         "hn_min_score": news_cfg.get("hn_min_score", 100),
     })
-    return {
+    briefing_result = {
         "sections": [asdict(s) for s in result.sections],
         "generated_at": result.generated_at,
         "summary": result.summary,
     }
+    if _agent_manager:
+        await _agent_manager.event_bus.emit(
+            "briefing.generated",
+            {"section_count": len(result.sections), "summary": (result.summary or "")[:100]},
+            source="briefing",
+        )
+    return briefing_result
 
 
 @app.get("/briefing/obsidian")
@@ -313,7 +361,18 @@ async def scout_sources() -> dict[str, Any]:
 
 @app.post("/scout/discover")
 async def scout_discover() -> dict[str, Any]:
-    cards = await run_discovery()
+    user_context = {
+        "stack": ["python", "fastapi", "react", "typescript", "mcp", "claude", "ai", "agent"],
+        "projects": ["jarvis", "magic-puffs", "clawwork", "sakura-radio", "chess-agent"],
+        "recent_topics": ["mcp", "dashboard", "scout", "voice", "tts", "integration"],
+    }
+    cards = await run_discovery(user_context=user_context)
+    if _agent_manager:
+        await _agent_manager.event_bus.emit(
+            "scout.discovery",
+            {"finds_count": len(cards)},
+            source="scout",
+        )
     return {
         "finds": [card_to_dict(c) for c in cards],
         "scanned_at": datetime.now(timezone.utc).isoformat(),
@@ -322,7 +381,7 @@ async def scout_discover() -> dict[str, Any]:
 
 @app.post("/scout/install")
 async def scout_install(body: ScoutInstallRequest) -> dict[str, Any]:
-    # In v1 we don't maintain a persistent candidate store, so mock it
+    # Candidate store is ephemeral per-session; pass empty dict for now
     result = await install_candidate(body.candidate_id, {})
     return result
 
@@ -595,7 +654,181 @@ async def voice_cache_generate() -> dict[str, Any]:
     return {"generated": count}
 
 
+# ── Chat endpoint ────────────────────────────────────────────────────
+
+@app.post("/chat")
+@rate_limit(_limiter, max_calls=20, window_seconds=60)
+async def chat(request: Request, body: ChatRequest) -> dict[str, Any]:
+    """Process a user message through Claude with JARVIS MCP tools.
+
+    Claude has access to weather, briefing, iMessage, reminders, calendar,
+    and more via MCP tools — it decides when to use them.
+    """
+    from src.chat.store import append_message
+
+    # Persist user message
+    append_message("user", body.message)
+
+    surface = classify(body.message)
+    response: dict[str, Any] = {"surface": surface.value}
+
+    if surface == Surface.CONTROL:
+        intent = control_intent(body.message)
+        if intent:
+            result = await execute_control(intent, confirmed=True)
+            response["reply"] = result.message
+            response["success"] = result.success
+            response["action"] = result.action
+        else:
+            from src.chat.reply import get_reply
+            response["reply"] = await get_reply(body.message)
+    else:
+        from src.chat.reply import get_reply
+        response["reply"] = await get_reply(body.message)
+
+    # Persist assistant reply
+    append_message("jarvis", response["reply"], surface=surface.value)
+
+    # Log to activity feed
+    if _agent_manager:
+        await _agent_manager.event_bus.emit(
+            "chat.message",
+            {"surface": surface.value, "preview": body.message[:80]},
+            source="chat",
+        )
+
+    return response
+
+
+@app.get("/chat/history")
+async def chat_history(limit: int = Query(100), offset: int = Query(0)) -> dict[str, Any]:
+    """Return server-side chat history."""
+    from src.chat.store import get_history
+    messages = get_history(limit=limit, offset=offset)
+    return {"messages": messages, "count": len(messages)}
+
+
+@app.delete("/chat/history")
+async def chat_history_clear() -> dict[str, str]:
+    """Clear all chat history."""
+    from src.chat.store import clear_history
+    clear_history()
+    return {"status": "cleared"}
+
+
+
 # ── Setup endpoints ──────────────────────────────────────────────────
+
+class VerifyChannelRequest(BaseModel):
+    channel: str
+    credentials: dict = {}
+
+
+@app.post("/setup/verify")
+@rate_limit(_limiter, max_calls=10, window_seconds=60)
+async def setup_verify(request: Request, body: VerifyChannelRequest) -> dict[str, Any]:
+    """Verify channel credentials against live APIs before saving."""
+    from src.setup.verify import (
+        verify_discord,
+        verify_email,
+        verify_phone_format,
+        verify_slack,
+        verify_telegram,
+    )
+
+    ch = body.channel
+    creds = body.credentials
+
+    if ch == "telegram":
+        return await verify_telegram(
+            creds.get("bot_token", ""), creds.get("chat_id", "")
+        )
+    elif ch == "discord":
+        return await verify_discord(
+            creds.get("bot_token", ""), creds.get("channel_id", "")
+        )
+    elif ch == "slack":
+        return await verify_slack(
+            creds.get("bot_token", ""), creds.get("channel_id", "")
+        )
+    elif ch == "email":
+        return await verify_email(
+            creds.get("smtp_host", ""),
+            creds.get("smtp_port", "587"),
+            creds.get("username", ""),
+            creds.get("password", ""),
+        )
+    elif ch == "imessage":
+        return verify_phone_format(creds.get("target", ""))
+    else:
+        return {"ok": False, "error": f"Unknown channel: {ch}"}
+
+
+class TestMessageRequest(BaseModel):
+    channel: str
+    credentials: dict = {}
+
+
+@app.post("/setup/test-message")
+@rate_limit(_limiter, max_calls=5, window_seconds=60)
+async def setup_test_message(request: Request, body: TestMessageRequest) -> dict[str, Any]:
+    """Send a test message through a verified channel."""
+    ch = body.channel
+    creds = body.credentials
+    msg = "Hello from JARVIS — this is a test message to confirm your channel is working."
+
+    try:
+        if ch == "telegram":
+            from src.hands.telegram import send as tg_send
+            result = await tg_send({"bot_token": creds.get("bot_token", ""), "chat_id": creds.get("chat_id", "")}, msg)
+            return {"ok": result.success, "message": result.message}
+        elif ch == "discord":
+            from src.hands.discord_bot import send as dc_send
+            result = await dc_send({"bot_token": creds.get("bot_token", ""), "channel_id": creds.get("channel_id", "")}, msg)
+            return {"ok": result.success, "message": result.message}
+        elif ch == "slack":
+            from src.hands.slack_bot import send as sl_send
+            result = await sl_send({"bot_token": creds.get("bot_token", ""), "channel_id": creds.get("channel_id", "")}, msg)
+            return {"ok": result.success, "message": result.message}
+        elif ch == "email":
+            from src.hands.email_client import send as em_send
+            result = await em_send({
+                "smtp_host": creds.get("smtp_host", ""),
+                "smtp_port": creds.get("smtp_port", "587"),
+                "username": creds.get("username", ""),
+                "password": creds.get("password", ""),
+                "recipient": creds.get("username", ""),
+            }, msg)
+            return {"ok": result.success, "message": result.message}
+        elif ch == "imessage":
+            from src.hands.messaging import send_imessage
+            target = creds.get("target", "")
+            result = await send_imessage(target, msg)
+            return {"ok": result.success, "message": result.message}
+        else:
+            return {"ok": False, "error": f"Unknown channel: {ch}"}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.get("/setup/status")
+async def setup_status() -> dict[str, Any]:
+    """Check whether first-run setup has been completed (persisted to disk)."""
+    config_dir = Path(__file__).resolve().parent.parent.parent / "config"
+    jarvis_config = config_dir / "jarvis.toml"
+    if jarvis_config.exists():
+        import toml as _toml
+        try:
+            data = _toml.load(jarvis_config)
+            if data.get("setup_complete"):
+                return {
+                    "setup_complete": True,
+                    "completed_at": data.get("setup_completed_at"),
+                }
+        except Exception:
+            pass
+    return {"setup_complete": False}
+
 
 @app.post("/setup/start")
 async def setup_start() -> dict[str, Any]:
@@ -615,6 +848,12 @@ async def setup_step(step_number: int, body: SetupStepRequest) -> dict[str, Any]
     if _setup_state is None:
         return {"error": "Setup not started. Call POST /setup/start first."}
     _setup_state, result = await execute_step(_setup_state, step_number, body.config)
+    if _agent_manager:
+        await _agent_manager.event_bus.emit(
+            "setup.step_completed",
+            {"step": step_number, "total": len(_setup_state.steps)},
+            source="setup",
+        )
     return {
         "step": step_number,
         "result": result,
@@ -690,6 +929,12 @@ api_router.add_api_route("/voice/synthesize", voice_synthesize, methods=["POST"]
 api_router.add_api_route("/voice/status", voice_status, methods=["GET"])
 api_router.add_api_route("/voice/pipeline", voice_pipeline, methods=["POST"])
 api_router.add_api_route("/voice/cache/generate", voice_cache_generate, methods=["POST"])
+api_router.add_api_route("/chat", chat, methods=["POST"])
+api_router.add_api_route("/chat/history", chat_history, methods=["GET"])
+api_router.add_api_route("/chat/history", chat_history_clear, methods=["DELETE"])
+api_router.add_api_route("/setup/verify", setup_verify, methods=["POST"])
+api_router.add_api_route("/setup/test-message", setup_test_message, methods=["POST"])
+api_router.add_api_route("/setup/status", setup_status, methods=["GET"])
 api_router.add_api_route("/setup/start", setup_start, methods=["POST"])
 api_router.add_api_route("/setup/step/{step_number}", setup_step, methods=["POST"])
 api_router.add_api_route("/setup/skip/{step_number}", setup_skip, methods=["POST"])

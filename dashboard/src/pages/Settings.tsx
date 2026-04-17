@@ -2,44 +2,103 @@ import { useState, useEffect, useCallback } from "react";
 import { Card } from "../components/Card";
 import { Toggle } from "../components/Toggle";
 import { useToast } from "../components/Toast";
+import { usePersonality } from "../stores/personality";
 import {
   fetchSettings,
   updateSection,
   fetchNotifications,
-  updateNotifications,
-  fetchControlTiers,
-  updateControlTiers,
   exportData,
 } from "../api/settings";
 
 type SettingsData = Record<string, Record<string, unknown>>;
 
-const SECTIONS = [
-  "personality",
-  "voice",
-  "behavior",
-  "communication",
-  "briefing",
-  "privacy",
-] as const;
+const GENERIC_SECTIONS = ["behavior", "briefing", "privacy"] as const;
+
+const TTS_PROVIDERS = [
+  { id: "macos_say", label: "macOS Say (free)" },
+  { id: "fish_audio", label: "Fish Audio" },
+  { id: "claude_tts", label: "Claude TTS" },
+  { id: "elevenlabs", label: "ElevenLabs" },
+  { id: "openai_tts", label: "OpenAI TTS" },
+];
+
+const STT_PROVIDERS = [
+  { id: "macos_dictation", label: "macOS Dictation (free)" },
+  { id: "whisper_local", label: "Whisper (local)" },
+  { id: "openai_whisper", label: "OpenAI Whisper" },
+  { id: "deepgram", label: "Deepgram" },
+];
+
+function ShimmerCard() {
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-5">
+        <div className="h-5 w-28 rounded bg-border-subtle loading-shimmer" />
+        <div className="h-8 w-16 rounded-lg bg-border-subtle loading-shimmer" />
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <div className="h-3.5 w-20 rounded bg-border-subtle loading-shimmer" />
+          <div className="h-10 w-full rounded-lg bg-border-subtle loading-shimmer" />
+        </div>
+        <div className="space-y-2">
+          <div className="h-3.5 w-24 rounded bg-border-subtle loading-shimmer" />
+          <div className="h-10 w-full rounded-lg bg-border-subtle loading-shimmer" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SaveButton({
+  dirty,
+  onClick,
+}: {
+  dirty: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={!dirty}
+      className={`
+        text-sm font-semibold font-body px-4 py-1.5 rounded-lg transition-all duration-200
+        ${
+          dirty
+            ? "bg-accent hover:bg-accent/80 text-white shadow-[0_0_12px_rgba(192,145,90,0.2)]"
+            : "bg-elevated text-text-muted border border-border-subtle cursor-not-allowed"
+        }
+      `}
+    >
+      Save
+    </button>
+  );
+}
+
+function formatLabel(key: string): string {
+  return key
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 export function Settings() {
   const { toast } = useToast();
+  const { refresh: refreshPersonality } = usePersonality();
   const [settings, setSettings] = useState<SettingsData | null>(null);
-  const [notifications, setNotifications] = useState<Record<string, unknown> | null>(null);
-  const [tiers, setTiers] = useState<Record<string, unknown> | null>(null);
+  const [notifications, setNotifications] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
   const [dirty, setDirty] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     try {
-      const [s, n, t] = await Promise.all([
+      const [s, n] = await Promise.all([
         fetchSettings(),
         fetchNotifications(),
-        fetchControlTiers(),
       ]);
       setSettings(s as SettingsData);
       setNotifications(n);
-      setTiers(t);
     } catch {
       toast("Failed to load settings", "error");
     }
@@ -69,29 +128,9 @@ export function Settings() {
         next.delete(section);
         return next;
       });
-      toast(`${section} saved`);
+      toast(`${formatLabel(section)} saved`);
     } catch {
       toast(`Failed to save ${section}`, "error");
-    }
-  }
-
-  async function handleSaveNotifications() {
-    if (!notifications) return;
-    try {
-      await updateNotifications(notifications);
-      toast("Notifications saved");
-    } catch {
-      toast("Failed to save notifications", "error");
-    }
-  }
-
-  async function handleSaveTiers() {
-    if (!tiers) return;
-    try {
-      await updateControlTiers(tiers);
-      toast("Control tiers saved");
-    } catch {
-      toast("Failed to save tiers", "error");
     }
   }
 
@@ -104,50 +143,250 @@ export function Settings() {
     }
   }
 
+  const personality = settings?.personality;
+  const voice = settings?.voice;
+  const communication = settings?.communication;
+
+  /* ------------------------------------------------------------------ */
+  /*  Loading state                                                      */
+  /* ------------------------------------------------------------------ */
   if (!settings) {
-    return <p className="text-text-secondary">Loading settings...</p>;
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-8">
+          <h1 className="text-2xl font-display font-semibold text-text-primary tracking-tight">
+            Settings
+          </h1>
+        </div>
+        <div className="space-y-6">
+          <ShimmerCard />
+          <ShimmerCard />
+          <ShimmerCard />
+        </div>
+      </div>
+    );
   }
 
+  /* ------------------------------------------------------------------ */
+  /*  Render                                                              */
+  /* ------------------------------------------------------------------ */
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Settings</h1>
-        <button
-          onClick={handleExport}
-          className="bg-card border border-border-default hover:bg-white/5 text-text-primary font-semibold px-4 py-2 rounded-lg transition-colors text-sm"
-        >
+      {/* Page header */}
+      <div className="flex items-center justify-between mb-8">
+        <h1 className="text-2xl font-display font-semibold text-text-primary tracking-tight">
+          Settings
+        </h1>
+        <button onClick={handleExport} className="btn-secondary">
           Export All Data
         </button>
       </div>
 
       <div className="space-y-6">
-        {SECTIONS.map((section) => {
+        {/* ── Personality ─────────────────────────────────────────── */}
+        {personality && (
+          <Card>
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="font-display font-semibold text-lg text-text-primary">
+                Personality
+              </h2>
+              <SaveButton
+                dirty={dirty.has("personality")}
+                onClick={async () => {
+                  await handleSave("personality");
+                  refreshPersonality();
+                }}
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-body text-text-secondary mb-1.5">
+                  Your Name
+                </label>
+                <input
+                  type="text"
+                  value={String(personality.user_display_name ?? "")}
+                  onChange={(e) =>
+                    handleChange(
+                      "personality",
+                      "user_display_name",
+                      e.target.value,
+                    )
+                  }
+                  placeholder="Sir"
+                  className="input-base w-full"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-body text-text-secondary mb-1.5">
+                  Assistant Name
+                </label>
+                <input
+                  type="text"
+                  value={String(personality.assistant_name ?? "")}
+                  onChange={(e) =>
+                    handleChange(
+                      "personality",
+                      "assistant_name",
+                      e.target.value,
+                    )
+                  }
+                  placeholder="JARVIS"
+                  className="input-base w-full"
+                />
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {/* ── Voice ───────────────────────────────────────────────── */}
+        {voice && (
+          <Card>
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="font-display font-semibold text-lg text-text-primary">
+                Voice
+              </h2>
+              <SaveButton
+                dirty={dirty.has("voice")}
+                onClick={() => handleSave("voice")}
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-body text-text-secondary mb-1.5">
+                  Text-to-Speech
+                </label>
+                <select
+                  value={String(
+                    (voice as Record<string, unknown>).tts_provider ??
+                      "macos_say",
+                  )}
+                  onChange={(e) =>
+                    handleChange("voice", "tts_provider", e.target.value)
+                  }
+                  className="input-base w-full appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2012%2012%22%3E%3Cpath%20fill%3D%22%236b7194%22%20d%3D%22M2%204l4%204%204-4%22%2F%3E%3C%2Fsvg%3E')] bg-[length:12px] bg-[right_12px_center] bg-no-repeat pr-8"
+                >
+                  {TTS_PROVIDERS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-body text-text-secondary mb-1.5">
+                  Speech-to-Text
+                </label>
+                <select
+                  value={String(
+                    (voice as Record<string, unknown>).stt_provider ??
+                      "macos_dictation",
+                  )}
+                  onChange={(e) =>
+                    handleChange("voice", "stt_provider", e.target.value)
+                  }
+                  className="input-base w-full appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2012%2012%22%3E%3Cpath%20fill%3D%22%236b7194%22%20d%3D%22M2%204l4%204%204-4%22%2F%3E%3C%2Fsvg%3E')] bg-[length:12px] bg-[right_12px_center] bg-no-repeat pr-8"
+                >
+                  {STT_PROVIDERS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {/* ── Channels (read-only) ────────────────────────────────── */}
+        {communication && (
+          <Card>
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="font-display font-semibold text-lg text-text-primary">
+                Channels
+              </h2>
+              <span className="text-xs font-body text-text-muted">
+                Re-run setup to change channels
+              </span>
+            </div>
+            <div className="space-y-1">
+              {Object.entries(communication).map(([key, value]) => {
+                if (typeof value !== "object" || value === null) return null;
+                const label = formatLabel(key);
+                return (
+                  <div
+                    key={key}
+                    className="flex items-center justify-between py-2.5 px-3 rounded-lg hover:bg-surface/60 transition-colors border-b border-border-subtle last:border-0"
+                  >
+                    <span className="text-sm font-body text-text-primary">
+                      {label}
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 text-xs font-medium font-body text-emerald-400">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                      Configured
+                    </span>
+                  </div>
+                );
+              })}
+              {Object.entries(communication).filter(
+                ([, v]) => typeof v === "object" && v !== null,
+              ).length === 0 && (
+                <p className="text-sm text-text-muted font-body py-2">
+                  No channels configured yet.
+                </p>
+              )}
+            </div>
+          </Card>
+        )}
+
+        {/* ── Generic sections (Behavior / Briefing / Privacy) ──── */}
+        {GENERIC_SECTIONS.map((section) => {
           const data = settings[section];
           if (!data) return null;
+
+          const entries = Object.entries(data).filter(
+            ([, value]) => !(typeof value === "object" && value !== null),
+          );
+          if (entries.length === 0) return null;
+
           return (
             <Card key={section}>
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-text-primary capitalize">
-                  {section}
+              <div className="flex items-center justify-between mb-5">
+                <h2 className="font-display font-semibold text-lg text-text-primary">
+                  {formatLabel(section)}
                 </h2>
-                <button
+                <SaveButton
+                  dirty={dirty.has(section)}
                   onClick={() => handleSave(section)}
-                  disabled={!dirty.has(section)}
-                  className="bg-accent hover:bg-accent-hover text-white text-sm font-semibold px-3 py-1.5 rounded-lg transition-colors disabled:opacity-30"
-                >
-                  Save
-                </button>
+                />
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                {Object.entries(data).map(([key, value]) => (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-4">
+                {entries.map(([key, value]) => (
                   <div key={key}>
-                    <label className="block text-sm text-text-secondary mb-1 capitalize">
-                      {key.replace(/_/g, " ")}
+                    <label className="block text-sm font-body text-text-secondary mb-1.5">
+                      {formatLabel(key)}
                     </label>
                     {typeof value === "boolean" ? (
-                      <Toggle
-                        checked={value}
-                        onChange={(v) => handleChange(section, key, v)}
+                      <div className="pt-1">
+                        <Toggle
+                          checked={value}
+                          onChange={(v) => handleChange(section, key, v)}
+                        />
+                      </div>
+                    ) : typeof value === "number" ? (
+                      <input
+                        type="number"
+                        value={value}
+                        onChange={(e) =>
+                          handleChange(
+                            section,
+                            key,
+                            e.target.value === ""
+                              ? ""
+                              : Number(e.target.value),
+                          )
+                        }
+                        className="input-base w-full"
                       />
                     ) : (
                       <input
@@ -156,7 +395,7 @@ export function Settings() {
                         onChange={(e) =>
                           handleChange(section, key, e.target.value)
                         }
-                        className="w-full bg-primary border border-border-default rounded-lg px-3 py-2 text-text-primary text-sm focus:border-accent focus:outline-none"
+                        className="input-base w-full"
                       />
                     )}
                   </div>
@@ -166,40 +405,16 @@ export function Settings() {
           );
         })}
 
+        {/* ── Notifications (read-only display) ───────────────────── */}
         {notifications && (
           <Card>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-text-primary">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="font-display font-semibold text-lg text-text-primary">
                 Notifications
               </h2>
-              <button
-                onClick={handleSaveNotifications}
-                className="bg-accent hover:bg-accent-hover text-white text-sm font-semibold px-3 py-1.5 rounded-lg transition-colors"
-              >
-                Save
-              </button>
             </div>
-            <pre className="text-xs bg-primary p-3 rounded-lg overflow-auto max-h-48 border border-border-default text-text-secondary">
+            <pre className="text-xs font-mono bg-primary/60 text-text-secondary p-4 rounded-lg overflow-auto max-h-56 border border-border-subtle leading-relaxed">
               {JSON.stringify(notifications, null, 2)}
-            </pre>
-          </Card>
-        )}
-
-        {tiers && (
-          <Card>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-text-primary">
-                Control Tiers
-              </h2>
-              <button
-                onClick={handleSaveTiers}
-                className="bg-accent hover:bg-accent-hover text-white text-sm font-semibold px-3 py-1.5 rounded-lg transition-colors"
-              >
-                Save
-              </button>
-            </div>
-            <pre className="text-xs bg-primary p-3 rounded-lg overflow-auto max-h-48 border border-border-default text-text-secondary">
-              {JSON.stringify(tiers, null, 2)}
             </pre>
           </Card>
         )}

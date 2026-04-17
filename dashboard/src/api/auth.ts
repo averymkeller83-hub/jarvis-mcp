@@ -10,17 +10,27 @@ interface UserInfo {
   role: string;
 }
 
-interface RegisterResult {
-  username: string;
-  role: string;
-  created_at: string;
+interface ClaudeDesktopStatus {
+  running: boolean;
+  authenticated: boolean;
+}
+
+export async function checkClaudeDesktop(): Promise<ClaudeDesktopStatus> {
+  return api<ClaudeDesktopStatus>("/auth/claude-desktop/status");
+}
+
+export async function loginWithClaudeDesktop(): Promise<void> {
+  const tokens = await api<AuthTokens>("/auth/claude-desktop/login", {
+    method: "POST",
+  });
+  setTokens(tokens.access_token, tokens.refresh_token);
 }
 
 export async function register(
   username: string,
   password: string,
-): Promise<RegisterResult> {
-  return api<RegisterResult>("/auth/register", {
+): Promise<{ username: string; role: string; created_at: string }> {
+  return api("/auth/register", {
     method: "POST",
     body: JSON.stringify({ username, password }),
   });

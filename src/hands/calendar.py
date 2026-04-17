@@ -10,7 +10,7 @@ from src.hands import ControlResult
 from src.hands.osascript import run_osascript
 
 # ── Live-mode toggle ─────────────────────────────────────────────────
-_LIVE_MODE: bool = False
+_LIVE_MODE: bool = True
 
 
 def _build_check_calendar_script(query: str) -> str:

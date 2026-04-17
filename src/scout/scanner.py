@@ -1,12 +1,36 @@
-"""Source scanning — stub implementations returning mock data."""
+"""Source scanning — live API integrations for Scout discovery."""
 
 from __future__ import annotations
 
+import subprocess
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from src.scout.sources import ScoutSource
+
+
+def _get_github_token() -> str | None:
+    """Pull GitHub token from gh CLI keyring (no secrets in code)."""
+    try:
+        result = subprocess.run(
+            ["gh", "auth", "token"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
+def _github_headers() -> dict[str, str]:
+    """Build GitHub API headers, with auth if available."""
+    headers = {"Accept": "application/vnd.github.v3+json"}
+    token = _get_github_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 @dataclass
@@ -38,33 +62,76 @@ def _uid() -> str:
 
 
 async def scan_anthropic_changelog() -> list[Candidate]:
-    """Mock: scan Anthropic's changelog for new capabilities."""
-    return [
-        Candidate(
-            id=_uid(),
-            name="Claude 4.5 Extended Thinking",
-            pitch="New extended-thinking mode doubles complex-reasoning accuracy",
-            source="anthropic_changelog",
-            source_url="https://docs.anthropic.com/changelog",
-            candidate_type="changelog",
-            metadata={"version": "4.5", "date": "2026-04-15"},
-        ),
-    ]
+    """Scan Anthropic SDK releases for new capabilities/API changes."""
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://api.github.com/repos/anthropics/anthropic-sdk-python/releases",
+                params={"per_page": 5},
+                headers=_github_headers(),
+            )
+            resp.raise_for_status()
+            candidates: list[Candidate] = []
+            for release in resp.json()[:3]:
+                tag = release.get("tag_name", "")
+                body = release.get("body", "") or ""
+                # Extract meaningful lines from release notes
+                lines = [l.strip() for l in body.split("\n") if l.strip() and not l.startswith("Full Changelog")]
+                pitch = " ".join(lines[:3])[:200] or f"Anthropic SDK {tag} release"
+                candidates.append(Candidate(
+                    id=_uid(),
+                    name=f"Anthropic SDK {tag}",
+                    pitch=pitch,
+                    source="anthropic_changelog",
+                    source_url=release.get("html_url", ""),
+                    candidate_type="changelog",
+                    metadata={"tag": tag, "published": release.get("published_at", "")},
+                ))
+            return candidates
+    except Exception:
+        return []
 
 
 async def scan_mcp_registry(urls: list[str]) -> list[Candidate]:
-    """Mock: scan MCP registries for new servers."""
-    return [
-        Candidate(
-            id=_uid(),
-            name="mcp-sqlite-explorer",
-            pitch="Browse and query SQLite databases directly from Claude",
-            source="mcp_registry",
-            source_url=urls[0] if urls else "https://mcp.so",
-            candidate_type="mcp_server",
-            metadata={"stars": 342, "registry": "mcp.so"},
-        ),
-    ]
+    """Scan MCP registries (npm, GitHub) for new/popular MCP servers."""
+    import httpx
+    from datetime import timedelta
+
+    candidates: list[Candidate] = []
+    since = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Search GitHub for recently updated MCP servers
+            resp = await client.get(
+                "https://api.github.com/search/repositories",
+                params={
+                    "q": f"mcp-server in:name pushed:>{since}",
+                    "sort": "updated",
+                    "per_page": 5,
+                },
+                headers=_github_headers(),
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                for repo in data.get("items", []):
+                    candidates.append(Candidate(
+                        id=_uid(),
+                        name=repo["name"],
+                        pitch=repo.get("description", "")[:200] or f"MCP server — {repo['stargazers_count']} stars",
+                        source="mcp_registry",
+                        source_url=repo["html_url"],
+                        candidate_type="mcp_server",
+                        metadata={
+                            "stars": repo.get("stargazers_count", 0),
+                            "language": repo.get("language", ""),
+                            "updated": repo.get("updated_at", ""),
+                        },
+                    ))
+    except Exception:
+        pass
+    return candidates
 
 
 async def scan_github_repos() -> list[Candidate]:
@@ -87,42 +154,76 @@ async def scan_github_repos() -> list[Candidate]:
                         candidate_type="github_issue",
                         metadata={"repo": repo},
                     ))
+                for pr in activity.get("recent_prs", []):
+                    candidates.append(Candidate(
+                        id=_uid(),
+                        name=f"PR #{pr.get('number', '?')}: {pr.get('title', '')}",
+                        pitch=f"Open PR in {repo} by {pr.get('user', 'unknown')}",
+                        source="github_repos",
+                        source_url=pr.get("url", ""),
+                        candidate_type="github_issue",
+                        metadata={"repo": repo, "type": "pr"},
+                    ))
+                ci = activity.get("ci_status")
+                if ci == "failing":
+                    candidates.append(Candidate(
+                        id=_uid(),
+                        name=f"CI failing: {repo}",
+                        pitch=f"Latest CI run is failing in {repo} — needs attention",
+                        source="github_repos",
+                        source_url=f"https://github.com/{repo}/actions",
+                        candidate_type="github_issue",
+                        metadata={"repo": repo, "type": "ci_failure"},
+                    ))
             except Exception:
                 continue
-        return candidates if candidates else _mock_github_repos()
+        return candidates
     except Exception:
-        return _mock_github_repos()
-
-
-def _mock_github_repos() -> list[Candidate]:
-    """Fallback mock data for GitHub repos scanner."""
-    return [
-        Candidate(
-            id=_uid(),
-            name="Issue #47: Memory leak in worker pool",
-            pitch="High-priority issue open 3 days with no assignee",
-            source="github_repos",
-            source_url="https://github.com/user/repo/issues/47",
-            candidate_type="github_issue",
-            metadata={"repo": "user/repo", "priority": "high"},
-        ),
-    ]
+        return []
 
 
 async def scan_github_trending(languages: list[str]) -> list[Candidate]:
-    """Mock: scan GitHub trending for relevant projects."""
-    lang_label = languages[0] if languages else "python"
-    return [
-        Candidate(
-            id=_uid(),
-            name="fast-agent",
-            pitch=f"Trending {lang_label} framework for building AI agents — 1.2k stars today",
-            source="github_trending",
-            source_url="https://github.com/example/fast-agent",
-            candidate_type="cli",
-            metadata={"language": lang_label, "stars_today": 1200},
-        ),
-    ]
+    """Scan GitHub trending repos via search API (sorted by stars, recently created)."""
+    import httpx
+    from datetime import timedelta
+
+    candidates: list[Candidate] = []
+    since = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            lang_filter = f" language:{languages[0]}" if languages else ""
+            min_stars = 10 if languages else 50
+            resp = await client.get(
+                "https://api.github.com/search/repositories",
+                params={
+                    "q": f"created:>{since}{lang_filter} stars:>{min_stars}",
+                    "sort": "stars",
+                    "order": "desc",
+                    "per_page": 5,
+                },
+                headers=_github_headers(),
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                for repo in data.get("items", []):
+                    candidates.append(Candidate(
+                        id=_uid(),
+                        name=repo["full_name"],
+                        pitch=repo.get("description", "")[:200] or f"Trending — {repo['stargazers_count']} stars this week",
+                        source="github_trending",
+                        source_url=repo["html_url"],
+                        candidate_type="cli",
+                        metadata={
+                            "language": repo.get("language", ""),
+                            "stars": repo.get("stargazers_count", 0),
+                            "forks": repo.get("forks_count", 0),
+                            "created": repo.get("created_at", ""),
+                        },
+                    ))
+    except Exception:
+        pass
+    return candidates
 
 
 async def scan_rss(feeds: list[str]) -> list[Candidate]:
@@ -142,24 +243,9 @@ async def scan_rss(feeds: list[str]) -> list[Candidate]:
                 candidate_type="rss_item",
                 metadata={"feed": item.get("source", ""), "published": item.get("published", "")},
             ))
-        return candidates if candidates else _mock_rss(feeds)
+        return candidates
     except Exception:
-        return _mock_rss(feeds)
-
-
-def _mock_rss(feeds: list[str]) -> list[Candidate]:
-    """Fallback mock data for RSS scanner."""
-    return [
-        Candidate(
-            id=_uid(),
-            name="Building MCP Servers in 10 Minutes",
-            pitch="Simon Willison walks through a minimal MCP server with Python",
-            source="rss_curated",
-            source_url="https://simonwillison.net/2026/Apr/15/mcp-servers/",
-            candidate_type="rss_item",
-            metadata={"author": "Simon Willison", "feed": feeds[0] if feeds else ""},
-        ),
-    ]
+        return []
 
 
 async def scan_hackernews(min_score: int = 100) -> list[Candidate]:
@@ -182,24 +268,9 @@ async def scan_hackernews(min_score: int = 100) -> list[Candidate]:
                     "comments": story.get("comments", 0),
                 },
             ))
-        return candidates if candidates else _mock_hackernews(min_score)
+        return candidates
     except Exception:
-        return _mock_hackernews(min_score)
-
-
-def _mock_hackernews(min_score: int = 100) -> list[Candidate]:
-    """Fallback mock data for HN scanner."""
-    return [
-        Candidate(
-            id=_uid(),
-            name="Show HN: Open-source Claude Code alternative",
-            pitch=f"HN post with {min_score + 50} points — open-source CLI agent toolkit",
-            source="hackernews",
-            source_url="https://news.ycombinator.com/item?id=99999",
-            candidate_type="rss_item",
-            metadata={"score": min_score + 50, "comments": 87},
-        ),
-    ]
+        return []
 
 
 async def scan_source(source: ScoutSource) -> ScanResult:
@@ -210,7 +281,6 @@ async def scan_source(source: ScoutSource) -> ScanResult:
         if source.name == "anthropic_changelog":
             candidates = await scan_anthropic_changelog()
         elif source.name == "claude_plugin_marketplace":
-            # Stub — no mock data yet for this source
             candidates = []
         elif source.name == "mcp_registry":
             candidates = await scan_mcp_registry(source.urls)

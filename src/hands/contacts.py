@@ -74,10 +74,46 @@ def _load_nicknames() -> dict[str, str]:
     return _nickname_cache
 
 
-# ── Layer 1: macOS Contacts.app (mock) ────────────────────────────────
+# ── Layer 1: macOS Contacts.app ──────────────────────────────────────
 
 def _lookup_contacts_app(name: str) -> ContactMatch | None:
-    """Look up a contact in macOS Contacts.app — mock, always returns None."""
+    """Look up a contact in macOS Contacts.app via AppleScript."""
+    import subprocess
+
+    escaped = name.replace('"', '\\"')
+    script = (
+        'tell application "Contacts"\n'
+        f'    set matches to every person whose name contains "{escaped}"\n'
+        '    if (count of matches) = 0 then return ""\n'
+        '    set p to item 1 of matches\n'
+        '    set fullName to name of p\n'
+        '    set phoneNum to ""\n'
+        '    set emailAddr to ""\n'
+        '    try\n'
+        '        set phoneNum to value of item 1 of phones of p\n'
+        '    end try\n'
+        '    try\n'
+        '        set emailAddr to value of item 1 of emails of p\n'
+        '    end try\n'
+        '    return fullName & "|" & phoneNum & "|" & emailAddr\n'
+        'end tell'
+    )
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True, text=True, timeout=10,
+        )
+        raw = result.stdout.strip()
+        if not raw:
+            return None
+        parts = raw.split("|", 2)
+        full_name = parts[0].strip()
+        phone = parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
+        email = parts[2].strip() if len(parts) > 2 and parts[2].strip() else None
+        if full_name:
+            return ContactMatch(full_name=full_name, phone=phone, email=email, source="contacts")
+    except Exception:
+        pass
     return None
 
 
@@ -104,7 +140,7 @@ def _lookup_recent(name: str) -> ContactMatch | None:
 def resolve_contact(name: str) -> ContactMatch | None:
     """Resolve a contact name through 3 layers:
 
-    1. macOS Contacts.app (mock — always None for now)
+    1. macOS Contacts.app (AppleScript)
     2. Nickname map from ``config/contacts_nicknames.toml``
     3. Recent conversation cache (in-memory)
 

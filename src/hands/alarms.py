@@ -12,7 +12,7 @@ from src.hands import ControlResult
 from src.hands.osascript import _osa_escape, run_osascript, run_shortcut
 
 # ── Live-mode toggle ─────────────────────────────────────────────────
-_LIVE_MODE: bool = False
+_LIVE_MODE: bool = True
 
 # ── Duration parser ───────────────────────────────────────────────────
 

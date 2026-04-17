@@ -32,9 +32,10 @@ async def fetch_weather(
 ) -> BriefingSection:
     """Return current weather for *location* using Open-Meteo.
 
-    Falls back to mock data on failure.
+    Returns empty on failure.
     """
-    loc = location or "Austin, TX"
+    from src.integrations.weather import DEFAULT_LOCATION_NAME
+    loc = location or DEFAULT_LOCATION_NAME
     try:
         from src.integrations.weather import (
             DEFAULT_LAT,
@@ -66,22 +67,8 @@ async def fetch_weather(
             empty=False,
         )
     except Exception:
-        # Fallback to mock data so the briefing never crashes
-        items = [
-            {
-                "temp": 78,
-                "condition": "Partly cloudy",
-                "high": 85,
-                "low": 68,
-                "summary": f"Partly cloudy in {loc}. High of 85 °F, low of 68 °F.",
-            }
-        ]
-        return BriefingSection(
-            title="Weather",
-            content=items[0]["summary"],
-            items=items,
-            empty=False,
-        )
+        logger.debug("Weather fetch failed", exc_info=True)
+        return BriefingSection(title="Weather", empty=True)
 
 
 # ── Calendar ─────────────────────────────────────────────────────────
@@ -150,11 +137,60 @@ end tell
 
 
 async def fetch_email() -> BriefingSection:
-    """Return unread mail summary.
+    """Return unread mail summary from Mail.app via AppleScript.
 
-    Returns empty when nothing unread.
+    Returns empty when nothing unread or Mail.app is unavailable.
     """
-    return BriefingSection(title="Email", empty=True)
+    script = '''
+tell application "Mail"
+    set unreadMessages to (every message of inbox whose read status is false)
+    set msgCount to count of unreadMessages
+    if msgCount = 0 then return ""
+    set output to ""
+    set limit to msgCount
+    if limit > 10 then set limit to 10
+    repeat with i from 1 to limit
+        set msg to item i of unreadMessages
+        set senderName to sender of msg
+        set subj to subject of msg
+        set output to output & senderName & " | " & subj & linefeed
+    end repeat
+    return output
+end tell
+'''
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["osascript", "-e", script],
+            capture_output=True, text=True, timeout=15,
+        )
+        raw = result.stdout.strip()
+        if not raw:
+            return BriefingSection(title="Email", empty=True)
+
+        items: list[dict] = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line or "|" not in line:
+                continue
+            parts = line.split("|", 1)
+            sender = parts[0].strip()
+            subject = parts[1].strip() if len(parts) > 1 else ""
+            items.append({"sender": sender, "subject": subject})
+
+        if not items:
+            return BriefingSection(title="Email", empty=True)
+
+        content = f"{len(items)} unread email(s)."
+        return BriefingSection(
+            title="Email",
+            content=content,
+            items=items,
+            empty=False,
+        )
+    except Exception:
+        logger.debug("Email fetch failed", exc_info=True)
+        return BriefingSection(title="Email", empty=True)
 
 
 # ── GitHub ───────────────────────────────────────────────────────────
@@ -332,9 +368,32 @@ end tell
 async def fetch_scout_discover() -> BriefingSection:
     """Return recent scout finds (tool / service candidates).
 
-    Returns empty when there are no new finds.
+    Runs the real Scout discovery pipeline and returns top results.
     """
-    return BriefingSection(title="Scout Discover", empty=True)
+    try:
+        from src.scout.engine import run_discovery
+        from src.scout.cards import card_to_dict
+
+        user_context = {
+            "stack": ["python", "fastapi", "react", "typescript", "mcp", "claude", "ai", "agent"],
+            "projects": ["jarvis", "magic-puffs", "clawwork", "sakura-radio"],
+            "recent_topics": ["mcp", "dashboard", "scout", "voice", "tts", "integration"],
+        }
+        cards = await run_discovery(user_context=user_context)
+        if not cards:
+            return BriefingSection(title="Scout Discover", empty=True)
+
+        items = [card_to_dict(c) for c in cards[:5]]
+        content = f"{len(items)} new tool/service discovery(s)."
+        return BriefingSection(
+            title="Scout Discover",
+            content=content,
+            items=items,
+            empty=False,
+        )
+    except Exception:
+        logger.debug("Scout discover failed", exc_info=True)
+        return BriefingSection(title="Scout Discover", empty=True)
 
 
 # ── Lessons Digest ───────────────────────────────────────────────────

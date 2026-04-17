@@ -103,8 +103,8 @@ async def _synth_fish_audio(text: str, cache_path: str, config: dict) -> None:
     api_key = config.get("api_key", "")
     voice_id = config.get("voice_id", "")
     if not api_key:
-        logger.warning("Fish Audio API key not set, falling back to mock")
-        Path(cache_path).write_bytes(b"RIFF_MOCK_WAV_DATA")
+        logger.warning("Fish Audio API key not set, falling back to macOS say")
+        await _synth_macos_say(text, cache_path)
         return
 
     async with httpx.AsyncClient() as client:
@@ -125,8 +125,8 @@ async def _synth_elevenlabs(text: str, cache_path: str, config: dict) -> None:
     api_key = config.get("api_key", "")
     voice_id = config.get("voice_id", "21m00Tcm4TlvDq8ikWAM")  # default: Rachel
     if not api_key:
-        logger.warning("ElevenLabs API key not set, falling back to mock")
-        Path(cache_path).write_bytes(b"RIFF_MOCK_WAV_DATA")
+        logger.warning("ElevenLabs API key not set, falling back to macOS say")
+        await _synth_macos_say(text, cache_path)
         return
 
     async with httpx.AsyncClient() as client:
@@ -147,8 +147,8 @@ async def _synth_openai_tts(text: str, cache_path: str, config: dict) -> None:
     api_key = config.get("api_key", "")
     voice = config.get("voice_id", "onyx")
     if not api_key:
-        logger.warning("OpenAI TTS API key not set, falling back to mock")
-        Path(cache_path).write_bytes(b"RIFF_MOCK_WAV_DATA")
+        logger.warning("OpenAI TTS API key not set, falling back to macOS say")
+        await _synth_macos_say(text, cache_path)
         return
 
     async with httpx.AsyncClient() as client:
@@ -163,9 +163,9 @@ async def _synth_openai_tts(text: str, cache_path: str, config: dict) -> None:
 
 
 async def _synth_claude_tts(text: str, cache_path: str, config: dict) -> None:
-    """Synthesize via Anthropic TTS (placeholder — not yet available)."""
-    logger.info("Claude TTS not yet available, using mock")
-    Path(cache_path).write_bytes(b"RIFF_MOCK_WAV_DATA")
+    """Synthesize via Anthropic TTS — not yet available, falls back to macOS say."""
+    logger.info("Claude TTS not yet available, falling back to macOS say")
+    await _synth_macos_say(text, cache_path)
 
 
 async def synthesize(
@@ -181,7 +181,9 @@ async def synthesize(
     cfg = config or _load_tts_config()
     provider = cfg.get("provider", "macos_say")
 
-    expanded = text.replace("{user_name}", user_name).replace("{time}", "7 AM")
+    from datetime import datetime
+    current_time = datetime.now().strftime("%-I:%M %p")
+    expanded = text.replace("{user_name}", user_name).replace("{time}", current_time)
     cache_path = get_cache_path(expanded, cache_dir)
 
     if Path(cache_path).exists():
@@ -206,8 +208,8 @@ async def synthesize(
     elif provider == "claude_tts":
         await _synth_claude_tts(expanded, cache_path, cfg)
     else:
-        logger.warning("Unknown TTS provider: %s, using mock", provider)
-        Path(cache_path).write_bytes(b"RIFF_MOCK_WAV_DATA")
+        logger.warning("Unknown TTS provider: %s, falling back to macOS say", provider)
+        await _synth_macos_say(expanded, cache_path)
 
     elapsed = int((time.monotonic() - start) * 1000)
     return TTSResult(
@@ -225,7 +227,8 @@ async def generate_phrase_cache(
     """Pre-generate cached audio for all COMMON_PHRASES."""
     generated = 0
     for phrase in COMMON_PHRASES:
-        expanded = phrase.replace("{user_name}", user_name).replace("{time}", "7 AM")
+        from datetime import datetime as _dt
+        expanded = phrase.replace("{user_name}", user_name).replace("{time}", _dt.now().strftime("%-I:%M %p"))
         if not is_cached(expanded, cache_dir):
             await synthesize(phrase, cache_dir=cache_dir, user_name=user_name)
             generated += 1

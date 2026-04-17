@@ -60,6 +60,14 @@ config/scout_sources.toml
 config/voice_profile.json
 config/users.toml
 config/auth_secret.toml
+config/communication.toml
+config/jarvis.toml
+config/agent_context.toml
+config/mcp-jarvis.json
+config/chat_history.json
+config/notifications.toml
+config/setup_state.json
+config/user_profile.json
 
 # User-created agents
 agents/
@@ -68,5 +76,17 @@ agents/
 dashboard/dist/
 dashboard/node_modules/
 
+# Dashboard build artifacts (TypeScript compilation)
+dashboard/*.tsbuildinfo
+dashboard/tsconfig.tsbuildinfo
+dashboard/tsconfig.node.tsbuildinfo
+dashboard/vite.config.js
+dashboard/vite.config.d.ts
+dashboard/tailwind.config.js
+dashboard/tailwind.config.d.ts
+
 # MLX model downloads
 models/
+
+# Superpowers brainstorm sessions
+.superpowers/

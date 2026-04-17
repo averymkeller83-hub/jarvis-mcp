@@ -1,12 +1,6 @@
-# JARVIS Voice Configuration
-# Provider choices are saved by the setup wizard
-
 [tts]
-provider = "macos_say"  # fish_audio | claude_tts | elevenlabs | openai_tts | macos_say
-# api_key = ""           # Required for fish_audio, elevenlabs, openai_tts
-# voice_id = ""          # Provider-specific voice identifier
+provider = "claude_tts"
 
 [stt]
-provider = "macos_dictation"  # whisper_local | openai_whisper | deepgram | macos_dictation
-# api_key = ""                # Required for openai_whisper, deepgram
-fallback_threshold = 0.7      # Below this confidence, retry with cloud
+provider = "whisper_local"
+fallback_threshold = 0.7

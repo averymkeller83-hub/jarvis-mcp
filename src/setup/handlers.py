@@ -6,10 +6,12 @@ import asyncio
 import json
 import logging
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 import toml
 
+from src.security.vault import CHANNEL_SECRET_KEYS, VOICE_SECRET_KEYS, vault
 from src.setup.steps import SUPPORTED_CHANNELS, SetupState, complete_step
 
 logger = logging.getLogger(__name__)
@@ -80,20 +82,20 @@ async def handle_communication(
         },
     }
 
-    # Per-channel credential sections
+    # Per-channel credential sections — secrets go to Keychain, rest to toml
     if "telegram" in valid:
-        tg = {}
+        tg: dict[str, str] = {}
         if config.get("telegram_bot_token"):
-            tg["bot_token"] = config["telegram_bot_token"]
+            vault.store("telegram", "bot_token", config["telegram_bot_token"])
         if config.get("telegram_chat_id"):
             tg["chat_id"] = config["telegram_chat_id"]
         if tg:
             data["telegram"] = tg
 
     if "discord" in valid:
-        dc = {}
+        dc: dict[str, str] = {}
         if config.get("discord_bot_token"):
-            dc["bot_token"] = config["discord_bot_token"]
+            vault.store("discord", "bot_token", config["discord_bot_token"])
         if config.get("discord_server_id"):
             dc["server_id"] = config["discord_server_id"]
         if config.get("discord_channel_id"):
@@ -102,20 +104,22 @@ async def handle_communication(
             data["discord"] = dc
 
     if "slack" in valid:
-        sl = {}
+        sl: dict[str, str] = {}
         if config.get("slack_bot_token"):
-            sl["bot_token"] = config["slack_bot_token"]
+            vault.store("slack", "bot_token", config["slack_bot_token"])
         if config.get("slack_channel_id"):
             sl["channel_id"] = config["slack_channel_id"]
         if sl:
             data["slack"] = sl
 
     if "email" in valid:
-        em = {}
-        for key in ("smtp_host", "smtp_port", "username", "password", "imap_host", "recipient"):
+        em: dict[str, str] = {}
+        for key in ("smtp_host", "smtp_port", "username", "imap_host", "recipient"):
             val = config.get(f"email_{key}")
             if val:
                 em[key] = val
+        if config.get("email_password"):
+            vault.store("email", "password", config["email_password"])
         if em:
             data["email"] = em
 
@@ -375,12 +379,13 @@ async def handle_voice_setup(
             "fallback_threshold": 0.7,
         },
     }
+    # API keys go to Keychain, not plaintext toml
     if tts_api_key:
-        voice_data["tts"]["api_key"] = tts_api_key
+        vault.store("voice_tts", "api_key", tts_api_key)
     if tts_voice_id:
         voice_data["tts"]["voice_id"] = tts_voice_id
     if stt_api_key:
-        voice_data["stt"]["api_key"] = stt_api_key
+        vault.store("voice_stt", "api_key", stt_api_key)
 
     voice_path = CONFIG_DIR / "voice.toml"
     voice_path.parent.mkdir(parents=True, exist_ok=True)
@@ -464,6 +469,20 @@ async def handle_done(state: SetupState, config: dict) -> tuple[SetupState, dict
         dispatch_result = await send_notification(notif)
     except Exception:
         dispatch_result = {"sent_to": [], "error": "dispatch failed"}
+
+    # Persist setup completion to disk so it survives server restarts
+    jarvis_config_path = CONFIG_DIR / "jarvis.toml"
+    jarvis_data: dict = {}
+    if jarvis_config_path.exists():
+        try:
+            jarvis_data = toml.load(jarvis_config_path)
+        except Exception:
+            pass
+    jarvis_data["setup_complete"] = True
+    jarvis_data["setup_completed_at"] = datetime.now(timezone.utc).isoformat()
+    jarvis_config_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(jarvis_config_path, "w") as f:
+        toml.dump(jarvis_data, f)
 
     result = {
         "message": first_contact,

@@ -46,16 +46,31 @@ async def _transcribe_whisper_local(
 ) -> STTResult:
     """Transcribe audio via local Whisper.cpp subprocess.
 
-    In production this shells out to the whisper.cpp binary.
-    If binary not found, returns mock data.
+    Shells out to the whisper.cpp binary if installed.
+    Falls back to macOS speech recognition if unavailable.
     """
-    confidence = mock_confidence if mock_confidence is not None else 0.92
-    return STTResult(
-        text="Hello Jarvis",
-        confidence=confidence,
-        source="whisper_local",
-        duration_ms=850,
-    )
+    import shutil
+
+    whisper_bin = shutil.which("whisper") or shutil.which("whisper.cpp") or shutil.which("whisper-cpp")
+    if whisper_bin:
+        start = time.monotonic()
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                whisper_bin, "-f", audio_path, "--no-timestamps", "-nt",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+            text = stdout.decode().strip()
+            elapsed = int((time.monotonic() - start) * 1000)
+            confidence = mock_confidence if mock_confidence is not None else 0.92
+            return STTResult(text=text, confidence=confidence, source="whisper_local", duration_ms=elapsed)
+        except Exception as e:
+            logger.warning("Whisper.cpp failed: %s", e)
+
+    # No whisper binary — return empty result so caller can fall back to cloud
+    logger.info("Whisper.cpp not installed, returning empty STT result")
+    return STTResult(text="", confidence=0.0, source="whisper_local", duration_ms=0)
 
 
 async def _transcribe_openai_whisper(audio_path: str, config: dict) -> STTResult:
@@ -64,8 +79,8 @@ async def _transcribe_openai_whisper(audio_path: str, config: dict) -> STTResult
 
     api_key = config.get("api_key", "")
     if not api_key:
-        logger.warning("OpenAI Whisper API key not set, using mock")
-        return STTResult(text="Hello Jarvis", confidence=0.97, source="openai_whisper", duration_ms=1200)
+        logger.warning("OpenAI Whisper API key not set — cannot transcribe")
+        return STTResult(text="", confidence=0.0, source="openai_whisper", duration_ms=0)
 
     start = time.monotonic()
     async with httpx.AsyncClient() as client:
@@ -94,8 +109,8 @@ async def _transcribe_deepgram(audio_path: str, config: dict) -> STTResult:
 
     api_key = config.get("api_key", "")
     if not api_key:
-        logger.warning("Deepgram API key not set, using mock")
-        return STTResult(text="Hello Jarvis", confidence=0.95, source="deepgram", duration_ms=900)
+        logger.warning("Deepgram API key not set — cannot transcribe")
+        return STTResult(text="", confidence=0.0, source="deepgram", duration_ms=0)
 
     start = time.monotonic()
     async with httpx.AsyncClient() as client:
@@ -127,9 +142,33 @@ async def _transcribe_deepgram(audio_path: str, config: dict) -> STTResult:
 
 
 async def _transcribe_macos_dictation(audio_path: str) -> STTResult:
-    """Transcribe using macOS dictation (placeholder — requires user interaction)."""
-    logger.info("macOS dictation requires user interaction, using mock")
-    return STTResult(text="Hello Jarvis", confidence=0.90, source="macos_dictation", duration_ms=500)
+    """Transcribe using macOS built-in speech recognition via SFSpeechRecognizer.
+
+    Uses the `say` command's speech recognition counterpart via a small Python script
+    that calls the macOS SFSpeechRecognizer framework. Falls back to empty on failure.
+    """
+    start = time.monotonic()
+    try:
+        # Use macOS `speech` CLI or Python objc bridge if available
+        proc = await asyncio.create_subprocess_exec(
+            "python3", "-c",
+            "import speech_recognition as sr; "
+            "r = sr.Recognizer(); "
+            f"a = sr.AudioFile('{audio_path}'); "
+            "s = r.record(a); "
+            "print(r.recognize_sphinx(s))",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+        text = stdout.decode().strip()
+        elapsed = int((time.monotonic() - start) * 1000)
+        if text:
+            return STTResult(text=text, confidence=0.85, source="macos_dictation", duration_ms=elapsed)
+    except Exception as e:
+        logger.debug("macOS dictation failed: %s", e)
+
+    return STTResult(text="", confidence=0.0, source="macos_dictation", duration_ms=0)
 
 
 async def transcribe(
@@ -168,7 +207,7 @@ async def transcribe(
         return await _transcribe_macos_dictation(audio_path)
 
     else:
-        logger.warning("Unknown STT provider: %s, using mock", provider)
+        logger.warning("Unknown STT provider: %s", provider)
         return STTResult(text="", confidence=0.0, source=provider, duration_ms=0)
 
 

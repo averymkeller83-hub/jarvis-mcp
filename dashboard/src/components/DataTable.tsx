@@ -12,6 +12,7 @@ interface Props<T> {
   data: T[];
   onRowClick?: (row: T) => void;
   keyField: string;
+  emptyMessage?: string;
 }
 
 export function DataTable<T extends Record<string, unknown>>({
@@ -19,6 +20,7 @@ export function DataTable<T extends Record<string, unknown>>({
   data,
   onRowClick,
   keyField,
+  emptyMessage = "No data available",
 }: Props<T>) {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -43,41 +45,64 @@ export function DataTable<T extends Record<string, unknown>>({
     return sortDir === "asc" ? cmp : -cmp;
   });
 
+  if (data.length === 0) {
+    return (
+      <div className="py-12 text-center">
+        <p className="text-text-muted text-sm">{emptyMessage}</p>
+      </div>
+    );
+  }
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full">
         <thead>
-          <tr className="border-b border-border-default">
+          <tr className="border-b border-border-subtle">
             {columns.map((col) => (
               <th
                 key={col.key}
-                className={`text-left text-xs text-text-secondary uppercase tracking-wider py-3 px-4 ${
-                  col.sortable !== false ? "cursor-pointer select-none" : ""
+                className={`text-left section-title py-3 px-4 ${
+                  col.sortable !== false
+                    ? "cursor-pointer select-none hover:text-text-secondary transition-colors"
+                    : ""
                 }`}
                 onClick={() =>
                   col.sortable !== false && handleSort(col.key)
                 }
               >
-                {col.label}
-                {sortKey === col.key && (sortDir === "asc" ? " ▲" : " ▼")}
+                <span className="flex items-center gap-1">
+                  {col.label}
+                  {sortKey === col.key && (
+                    <svg className="w-3 h-3" viewBox="0 0 12 12" fill="currentColor">
+                      {sortDir === "asc" ? (
+                        <path d="M6 2l4 5H2l4-5z" />
+                      ) : (
+                        <path d="M6 10l4-5H2l4 5z" />
+                      )}
+                    </svg>
+                  )}
+                </span>
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {sorted.map((row) => (
+          {sorted.map((row, i) => (
             <tr
               key={String(row[keyField])}
-              className={`border-b border-border-default/50 hover:bg-white/5 transition-colors ${
-                onRowClick ? "cursor-pointer" : ""
-              }`}
+              className={`
+                border-b border-border-subtle/50 transition-colors duration-150
+                ${onRowClick ? "cursor-pointer" : ""}
+                hover:bg-accent-muted/50
+              `}
+              style={{ animationDelay: `${i * 30}ms` }}
               onClick={() => onRowClick?.(row)}
             >
               {columns.map((col) => (
-                <td key={col.key} className="py-3 px-4 text-sm">
+                <td key={col.key} className="py-3 px-4 text-sm font-body">
                   {col.render
                     ? col.render(row)
-                    : String(row[col.key] ?? "")}
+                    : <span className="text-text-secondary">{String(row[col.key] ?? "")}</span>}
                 </td>
               ))}
             </tr>

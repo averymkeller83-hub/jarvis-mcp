@@ -8,12 +8,19 @@ export interface ScoutSource {
 }
 
 export interface ScoutFind {
-  title: string;
-  url: string;
-  source: string;
-  relevance: number;
-  summary: string;
   candidate_id: string;
+  name: string;
+  pitch: string;
+  source_badge: string;
+  match_reason: string;
+  sandbox_status: string;
+  install_available: boolean;
+  details: {
+    relevance_score: number;
+    candidate_type: string;
+    source_url: string;
+    metadata: Record<string, unknown>;
+  };
 }
 
 interface SourcesResponse {

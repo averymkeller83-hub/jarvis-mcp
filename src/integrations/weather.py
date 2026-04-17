@@ -2,11 +2,34 @@
 
 from __future__ import annotations
 
-import httpx
+from pathlib import Path
 
-# Default: Austin, TX
-DEFAULT_LAT = 30.2672
-DEFAULT_LON = -97.7431
+import httpx
+import toml
+
+_CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
+
+
+def _load_location() -> tuple[float, float, str]:
+    """Load location from jarvis.toml, fall back to auto-detect or defaults."""
+    try:
+        cfg = toml.load(_CONFIG_DIR / "jarvis.toml")
+        loc = cfg.get("location", {})
+        lat = loc.get("latitude")
+        lon = loc.get("longitude")
+        name = loc.get("name", "")
+        if lat and lon:
+            return float(lat), float(lon), name
+    except Exception:
+        pass
+    # Default (will be overridden when user sets location)
+    return 30.2672, -97.7431, "Austin, TX"
+
+
+_loc = _load_location()
+DEFAULT_LAT = _loc[0]
+DEFAULT_LON = _loc[1]
+DEFAULT_LOCATION_NAME = _loc[2]
 
 _WEATHER_CODE_MAP: dict[int, str] = {
     0: "Clear",

@@ -45,7 +45,7 @@ async def run_discovery(
     ]
 
     # 4. Rank and keep top results
-    top = rank_candidates(scored, limit=5)
+    top = rank_candidates(scored, limit=10)
 
     # 5. Sandbox-test executable candidates
     sandbox_results: dict[str, SandboxResult] = {}
@@ -67,9 +67,9 @@ async def install_candidate(
     candidate_id: str,
     candidates: dict[str, Candidate],
 ) -> dict:
-    """Mock install a candidate.
+    """Bookmark a candidate for installation.
 
-    In v2 this would run `claude mcp add`, npm install, etc.
+    Logs the action and returns the source URL for the user to review.
     """
     candidate = candidates.get(candidate_id)
     if candidate is None:
@@ -78,9 +78,15 @@ async def install_candidate(
             "message": f"Candidate {candidate_id} not found",
         }
 
+    import logging
+    logging.getLogger(__name__).info(
+        "Candidate bookmarked: %s (%s)", candidate.name, candidate.source_url
+    )
+
     return {
         "status": "installed",
         "candidate_id": candidate_id,
         "name": candidate.name,
-        "message": f"Successfully installed {candidate.name} (mock)",
+        "source_url": candidate.source_url or "",
+        "message": f"Bookmarked {candidate.name} — source: {candidate.source_url or 'N/A'}",
     }

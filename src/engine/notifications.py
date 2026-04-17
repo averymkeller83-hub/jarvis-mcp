@@ -26,28 +26,10 @@ DEFAULT_MATRIX: dict[str, list[str]] = {
 
 
 def _load_channel_config(channel: str) -> dict | None:
-    """Read per-channel config from communication.toml.
+    """Read per-channel config from communication.toml + secrets from Keychain."""
+    from src.security.vault import load_channel_config
 
-    For iMessage, reads [imessage] section or falls back to
-    channels.imessage_target for backwards compat.
-    """
-    comm_path = CONFIG_DIR / "communication.toml"
-    if not comm_path.exists():
-        return None
-    try:
-        data = toml.load(comm_path)
-        # Per-channel section (new format)
-        section = data.get(channel, {})
-        if section:
-            return section
-        # Legacy: iMessage target in channels
-        if channel == "imessage":
-            target = data.get("channels", {}).get("imessage_target")
-            if target:
-                return {"target": target}
-        return None
-    except Exception:
-        return None
+    return load_channel_config(channel)
 
 
 def _load_imessage_target() -> str | None:
@@ -83,8 +65,9 @@ async def send_notification(
 
     Channels:
         - macos: native display notification via osascript
-        - telegram: Telegram bot API (stubbed)
-        - voice: TTS pipeline (stubbed)
+        - telegram: Telegram bot API
+        - voice: TTS pipeline (synthesize + afplay)
+        - email: SMTP client
         - silent: log only, no push
     """
     cfg = config or {}
@@ -193,9 +176,24 @@ async def send_notification(
                     logger.warning("Email channel enabled but not configured")
 
             elif channel == "voice":
-                # Stubbed — would call TTS pipeline
-                logger.info("Voice notification (stub): %s", notification.title)
-                sent_to.append("voice")
+                try:
+                    from src.voice.tts import synthesize
+                    import asyncio as _aio
+
+                    tts_text = f"{notification.title}. {notification.body}"
+                    tts_result = await synthesize(tts_text)
+                    if tts_result.audio_path:
+                        proc = await _aio.create_subprocess_exec(
+                            "afplay", tts_result.audio_path,
+                            stdout=_aio.subprocess.DEVNULL,
+                            stderr=_aio.subprocess.DEVNULL,
+                        )
+                        await proc.wait()
+                        sent_to.append("voice")
+                    else:
+                        logger.warning("Voice TTS produced no audio")
+                except Exception as voice_err:
+                    logger.warning("Voice notification failed: %s", voice_err)
 
             elif channel == "silent":
                 logger.info(

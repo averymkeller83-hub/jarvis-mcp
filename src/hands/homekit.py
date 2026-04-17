@@ -10,7 +10,7 @@ from src.hands import ControlResult
 from src.hands.osascript import run_shortcut
 
 # ── Live-mode toggle ─────────────────────────────────────────────────
-_LIVE_MODE: bool = False
+_LIVE_MODE: bool = True
 
 
 async def _homekit_shortcut(

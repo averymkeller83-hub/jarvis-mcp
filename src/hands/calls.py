@@ -12,7 +12,7 @@ from src.hands import ControlResult
 from src.hands.osascript import open_url, run_osascript
 
 # ── Live-mode toggle ─────────────────────────────────────────────────
-_LIVE_MODE: bool = False
+_LIVE_MODE: bool = True
 
 
 async def make_call(contact: str) -> ControlResult:

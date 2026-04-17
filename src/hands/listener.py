@@ -68,7 +68,10 @@ class MessageListener:
 
         for channel in enabled:
             if channel in CHANNEL_REGISTRY and channel != "macos_notifications":
-                channel_config = config.get(channel, {})
+                # Merge toml config with vault secrets
+                from src.security.vault import load_channel_config
+
+                channel_config = load_channel_config(channel) or {}
                 task = asyncio.create_task(
                     self._poll_loop(channel, channel_config),
                     name=f"listener-{channel}",

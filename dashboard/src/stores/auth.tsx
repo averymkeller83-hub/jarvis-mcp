@@ -4,10 +4,13 @@ import {
   useState,
   useEffect,
   useCallback,
+  useRef,
   type ReactNode,
 } from "react";
-import { fetchMe, logout as apiLogout } from "../api/auth";
+import { fetchMe, logout as apiLogout, checkClaudeDesktop } from "../api/auth";
 import { getAccessToken } from "../api/client";
+
+const HEARTBEAT_MS = 10_000;
 
 interface User {
   username: string;
@@ -31,6 +34,7 @@ const AuthContext = createContext<AuthContextValue>({
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refresh = useCallback(async () => {
     if (!getAccessToken()) {
@@ -56,6 +60,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Heartbeat: auto-logout when Claude Desktop stops running
+  useEffect(() => {
+    if (!user) {
+      // Not logged in — stop polling
+      if (heartbeatRef.current) {
+        clearInterval(heartbeatRef.current);
+        heartbeatRef.current = null;
+      }
+      return;
+    }
+
+    heartbeatRef.current = setInterval(async () => {
+      try {
+        const status = await checkClaudeDesktop();
+        if (!status.running) {
+          logout();
+        }
+      } catch {
+        // Server unreachable — don't kick out, could be transient
+      }
+    }, HEARTBEAT_MS);
+
+    return () => {
+      if (heartbeatRef.current) {
+        clearInterval(heartbeatRef.current);
+        heartbeatRef.current = null;
+      }
+    };
+  }, [user, logout]);
 
   return (
     <AuthContext.Provider value={{ user, loading, refresh, logout }}>
