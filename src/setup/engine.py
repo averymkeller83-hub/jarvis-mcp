@@ -16,7 +16,7 @@ from src.setup.steps import (
 
 
 async def start_setup() -> SetupState:
-    """Create a fresh setup state with all 13 steps."""
+    """Create a fresh setup state with all 12 steps."""
     steps = create_setup_steps()
     return SetupState(
         steps=steps,
@@ -57,11 +57,11 @@ async def skip_setup_step(
 
 
 def is_setup_complete(state: SetupState) -> bool:
-    """True when every required step has been completed."""
-    for step in state.steps:
-        if step.required and not step.completed:
-            return False
-    return True
+    """True when the final step has been completed."""
+    if not state.steps:
+        return False
+    last = state.steps[-1]
+    return last.completed
 
 
 def get_setup_progress(state: SetupState) -> dict:

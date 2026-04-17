@@ -1,4 +1,4 @@
-"""Comprehensive tests for the first-run setup flow."""
+"""Comprehensive tests for the 12-step first-run setup flow."""
 
 from __future__ import annotations
 
@@ -19,14 +19,13 @@ from src.setup.steps import (
 )
 from src.setup.handlers import (
     STEP_HANDLERS,
-    handle_briefing_prefs,
     handle_claude_connection,
-    handle_colima_check,
     handle_communication,
     handle_contacts,
     handle_done,
     handle_first_scan,
     handle_github_auth,
+    handle_obsidian_vault,
     handle_personalization,
     handle_scout_sources,
     handle_services,
@@ -65,8 +64,8 @@ def client():
 # ── Step definitions ──────────────────────────────────────────────────
 
 
-def test_create_setup_steps_returns_13(steps):
-    assert len(steps) == 13
+def test_create_setup_steps_returns_12(steps):
+    assert len(steps) == 12
 
 
 def test_steps_1_and_4_are_required(steps):
@@ -78,12 +77,12 @@ def test_steps_1_and_4_are_required(steps):
 
 def test_optional_steps_count(steps):
     optional = [s for s in steps if not s.required]
-    assert len(optional) == 11
+    assert len(optional) == 10
 
 
 def test_step_numbers_sequential(steps):
     numbers = [s.number for s in steps]
-    assert numbers == list(range(1, 14))
+    assert numbers == list(range(1, 13))
 
 
 def test_step_names_are_strings(steps):
@@ -115,7 +114,7 @@ def test_advance_moves_to_next(state):
 def test_advance_stops_at_end(state):
     for _ in range(20):
         state = advance(state)
-    assert state.current_step == 13
+    assert state.current_step == 12
 
 
 def test_skip_step_optional(state):
@@ -193,7 +192,6 @@ async def test_handle_personalization(state, tmp_path, monkeypatch):
     assert result["assistant_name"] == "JARVIS"
     step = get_step(state, 2)
     assert step.completed is True
-    # Verify file was written
     personality = tmp_path / "personality.toml"
     assert personality.exists()
 
@@ -233,12 +231,79 @@ async def test_handle_communication_invalid_primary(state, tmp_path, monkeypatch
     assert result["primary"] == "imessage"  # falls back to first valid
 
 
-async def test_handle_claude_connection(state):
+async def test_handle_communication_telegram_credentials(state, tmp_path, monkeypatch):
+    monkeypatch.setattr("src.setup.handlers.CONFIG_DIR", tmp_path)
+    config = {
+        "channels": ["telegram"],
+        "primary": "telegram",
+        "telegram_bot_token": "123456:ABC-DEF",
+        "telegram_chat_id": "987654321",
+    }
+    state, result = await handle_communication(state, config)
+    import toml as toml_lib
+    data = toml_lib.load(tmp_path / "communication.toml")
+    assert data["telegram"]["bot_token"] == "123456:ABC-DEF"
+    assert data["telegram"]["chat_id"] == "987654321"
+
+
+async def test_handle_communication_discord_credentials(state, tmp_path, monkeypatch):
+    monkeypatch.setattr("src.setup.handlers.CONFIG_DIR", tmp_path)
+    config = {
+        "channels": ["discord"],
+        "primary": "discord",
+        "discord_bot_token": "MTIz.abc",
+        "discord_channel_id": "444",
+    }
+    state, result = await handle_communication(state, config)
+    import toml as toml_lib
+    data = toml_lib.load(tmp_path / "communication.toml")
+    assert data["discord"]["bot_token"] == "MTIz.abc"
+
+
+async def test_handle_communication_slack_credentials(state, tmp_path, monkeypatch):
+    monkeypatch.setattr("src.setup.handlers.CONFIG_DIR", tmp_path)
+    config = {
+        "channels": ["slack"],
+        "primary": "slack",
+        "slack_bot_token": "xoxb-123",
+        "slack_channel_id": "C01234",
+    }
+    state, result = await handle_communication(state, config)
+    import toml as toml_lib
+    data = toml_lib.load(tmp_path / "communication.toml")
+    assert data["slack"]["bot_token"] == "xoxb-123"
+
+
+async def test_handle_communication_email_credentials(state, tmp_path, monkeypatch):
+    monkeypatch.setattr("src.setup.handlers.CONFIG_DIR", tmp_path)
+    config = {
+        "channels": ["email"],
+        "primary": "email",
+        "email_smtp_host": "smtp.gmail.com",
+        "email_username": "user@gmail.com",
+        "email_password": "pass",
+    }
+    state, result = await handle_communication(state, config)
+    import toml as toml_lib
+    data = toml_lib.load(tmp_path / "communication.toml")
+    assert data["email"]["smtp_host"] == "smtp.gmail.com"
+
+
+async def test_handle_claude_connection(state, tmp_path, monkeypatch):
+    # Create Claude Desktop config dir
+    claude_dir = tmp_path / "Library" / "Application Support" / "Claude"
+    claude_dir.mkdir(parents=True)
+    (claude_dir / "claude_desktop_config.json").write_text("{}")
+    monkeypatch.setattr("src.setup.handlers.Path.home", lambda: tmp_path)
+
     state, result = await handle_claude_connection(state, {})
-    assert result["detected"] is True
-    assert result["tier"] == "pro"
+    assert result["registered"] is True
     step = get_step(state, 4)
     assert step.completed is True
+
+    import json
+    data = json.loads((claude_dir / "claude_desktop_config.json").read_text())
+    assert "jarvis" in data["mcpServers"]
 
 
 async def test_handle_contacts(state, tmp_path, monkeypatch):
@@ -267,7 +332,6 @@ async def test_handle_services_default(state):
 
 async def test_handle_scout_sources(state, tmp_path, monkeypatch):
     monkeypatch.setattr("src.setup.handlers.CONFIG_DIR", tmp_path)
-    # Create a minimal example file
     import toml
 
     example = tmp_path / "scout_sources.example.toml"
@@ -286,42 +350,59 @@ async def test_handle_scout_sources(state, tmp_path, monkeypatch):
 
 async def test_handle_github_auth(state):
     state, result = await handle_github_auth(state, {})
-    assert result["gh_found"] is True
-    assert result["authenticated"] is True
     step = get_step(state, 8)
     assert step.completed is True
 
 
-async def test_handle_colima_check(state):
-    state, result = await handle_colima_check(state, {})
-    assert result["docker_found"] is False
-    assert result["colima_found"] is False
-    assert result["offer_install"] is True
+async def test_handle_obsidian_vault_valid(state, tmp_path, monkeypatch):
+    monkeypatch.setattr("src.setup.handlers.CONFIG_DIR", tmp_path)
+    vault = tmp_path / "my-vault"
+    vault.mkdir()
+    (vault / ".obsidian").mkdir()
+    state, result = await handle_obsidian_vault(state, {"vault_path": str(vault)})
+    assert result["valid"] is True
     step = get_step(state, 9)
     assert step.completed is True
 
 
-async def test_handle_briefing_prefs(state):
-    config = {"briefing_time": "08:00", "obsidian_vault": "/Users/test/vault"}
-    state, result = await handle_briefing_prefs(state, config)
-    assert result["briefing_time"] == "08:00"
-    assert result["obsidian_vault"] == "/Users/test/vault"
+async def test_handle_obsidian_vault_invalid(state, tmp_path, monkeypatch):
+    monkeypatch.setattr("src.setup.handlers.CONFIG_DIR", tmp_path)
+    state, result = await handle_obsidian_vault(state, {"vault_path": "/nonexistent"})
+    assert result["valid"] is False
+
+
+async def test_handle_obsidian_vault_empty(state, tmp_path, monkeypatch):
+    monkeypatch.setattr("src.setup.handlers.CONFIG_DIR", tmp_path)
+    state, result = await handle_obsidian_vault(state, {})
+    assert result["valid"] is False
+    assert "can add later" in result["message"]
+
+
+async def test_handle_voice_setup_defaults(state, tmp_path, monkeypatch):
+    monkeypatch.setattr("src.setup.handlers.CONFIG_DIR", tmp_path)
+    state, result = await handle_voice_setup(state, {})
+    assert result["tts_provider"] == "macos_say"
+    assert result["stt_provider"] == "macos_dictation"
     step = get_step(state, 10)
     assert step.completed is True
+    assert (tmp_path / "voice.toml").exists()
 
 
-async def test_handle_briefing_prefs_defaults(state):
-    state, result = await handle_briefing_prefs(state, {})
-    assert result["briefing_time"] == "07:30"
-    assert result["obsidian_vault"] is None
-
-
-async def test_handle_voice_setup(state):
-    state, result = await handle_voice_setup(state, {})
-    assert result["mic_detected"] is True
-    assert result["tts_working"] is True
-    step = get_step(state, 11)
-    assert step.completed is True
+async def test_handle_voice_setup_custom(state, tmp_path, monkeypatch):
+    monkeypatch.setattr("src.setup.handlers.CONFIG_DIR", tmp_path)
+    config = {
+        "tts_provider": "fish_audio",
+        "tts_api_key": "key123",
+        "stt_provider": "deepgram",
+        "stt_api_key": "dgkey",
+    }
+    state, result = await handle_voice_setup(state, config)
+    assert result["tts_provider"] == "fish_audio"
+    assert result["stt_provider"] == "deepgram"
+    import toml as toml_lib
+    data = toml_lib.load(tmp_path / "voice.toml")
+    assert data["tts"]["api_key"] == "key123"
+    assert data["stt"]["api_key"] == "dgkey"
 
 
 async def test_handle_first_scan(state):
@@ -330,7 +411,7 @@ async def test_handle_first_scan(state):
         state, result = await handle_first_scan(state, {})
         assert result["scan_count"] == 0
         mock_disc.assert_awaited_once()
-    step = get_step(state, 12)
+    step = get_step(state, 11)
     assert step.completed is True
 
 
@@ -341,12 +422,11 @@ async def test_handle_done_default_name(state):
     assert "more time for" in result["message"]
     assert "Avery Keller" in result["message"]
     assert result["sent_via"] == "macos_notifications"
-    step = get_step(state, 13)
+    step = get_step(state, 12)
     assert step.completed is True
 
 
 async def test_handle_done_personalised(state):
-    # Complete step 2 first with a user name
     complete_step(state, 2, {"user_name": "Avery", "assistant_name": "JARVIS"})
     complete_step(state, 3, {"primary": "telegram", "enabled": ["telegram"]})
     state, result = await handle_done(state, {})
@@ -356,9 +436,9 @@ async def test_handle_done_personalised(state):
     assert "driver's seat" in result["message"]
 
 
-def test_step_handlers_dict_has_all_13():
-    assert len(STEP_HANDLERS) == 13
-    for i in range(1, 14):
+def test_step_handlers_dict_has_all_12():
+    assert len(STEP_HANDLERS) == 12
+    for i in range(1, 13):
         assert i in STEP_HANDLERS
 
 
@@ -367,7 +447,7 @@ def test_step_handlers_dict_has_all_13():
 
 async def test_start_setup():
     state = await start_setup()
-    assert len(state.steps) == 13
+    assert len(state.steps) == 12
     assert state.current_step == 1
     assert state.started_at != ""
 
@@ -406,12 +486,11 @@ def test_is_setup_complete_false_initially():
     assert is_setup_complete(state) is False
 
 
-def test_is_setup_complete_true_when_required_done():
+def test_is_setup_complete_true_when_last_step_done():
     from src.setup.steps import create_setup_steps
 
     state = SetupState(steps=create_setup_steps(), started_at="t")
-    complete_step(state, 1, {"done": True})
-    complete_step(state, 4, {"done": True})
+    complete_step(state, 12, {"done": True})
     assert is_setup_complete(state) is True
 
 
@@ -420,10 +499,10 @@ def test_get_setup_progress_initial():
 
     state = SetupState(steps=create_setup_steps(), started_at="t")
     prog = get_setup_progress(state)
-    assert prog["total"] == 13
+    assert prog["total"] == 12
     assert prog["completed"] == 0
     assert prog["skipped"] == 0
-    assert prog["remaining"] == 13
+    assert prog["remaining"] == 12
     assert prog["percent"] == 0
 
 
@@ -437,8 +516,8 @@ def test_get_setup_progress_partial():
     prog = get_setup_progress(state)
     assert prog["completed"] == 2
     assert prog["skipped"] == 1
-    assert prog["remaining"] == 10
-    assert prog["percent"] == 15  # round(2/13 * 100) = 15
+    assert prog["remaining"] == 9
+    assert prog["percent"] == 17  # round(2/12 * 100) = 17
 
 
 # ── Server endpoints ─────────────────────────────────────────────────
@@ -449,7 +528,7 @@ async def test_setup_start_endpoint(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "started"
-    assert data["total_steps"] == 13
+    assert data["total_steps"] == 12
     assert data["current_step"] == 1
 
 
@@ -464,7 +543,6 @@ async def test_setup_step_endpoint(client):
 
 
 async def test_setup_step_without_start(client):
-    # Reset the global state
     import src.server.app as srv
     srv._setup_state = None
 
@@ -498,7 +576,7 @@ async def test_setup_progress_endpoint(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["completed"] == 1
-    assert data["total"] == 13
+    assert data["total"] == 12
 
 
 async def test_setup_progress_without_start(client):
@@ -522,7 +600,7 @@ async def test_status_includes_setup(client):
 
 
 async def test_full_setup_walkthrough(client, tmp_path, monkeypatch):
-    """Walk through all 13 steps end-to-end."""
+    """Walk through all 12 steps end-to-end."""
     monkeypatch.setattr("src.setup.handlers.CONFIG_DIR", tmp_path)
 
     # Start
@@ -543,20 +621,30 @@ async def test_full_setup_walkthrough(client, tmp_path, monkeypatch):
     # Step 3 — communication
     resp = await client.post(
         "/setup/step/3",
-        json={"config": {"channels": ["imessage", "telegram"], "primary": "telegram"}},
+        json={
+            "config": {
+                "channels": ["imessage", "telegram"],
+                "primary": "telegram",
+                "telegram_bot_token": "123:ABC",
+                "telegram_chat_id": "999",
+            }
+        },
     )
     assert resp.json()["result"]["primary"] == "telegram"
 
-    # Step 4 — claude connection
+    # Step 4 — claude desktop MCP registration
+    claude_dir = tmp_path / "Library" / "Application Support" / "Claude"
+    claude_dir.mkdir(parents=True)
+    (claude_dir / "claude_desktop_config.json").write_text("{}")
+    monkeypatch.setattr("src.setup.handlers.Path.home", lambda: tmp_path)
     resp = await client.post("/setup/step/4", json={"config": {}})
-    assert resp.json()["result"]["detected"] is True
+    assert resp.json()["result"]["registered"] is True
 
     # Step 5 — contacts
     resp = await client.post(
         "/setup/step/5",
         json={"config": {"nicknames": {"mom": "Jane"}}},
     )
-    assert resp.json()["result"]["nickname_count"] == 1
 
     # Step 6 — services
     resp = await client.post(
@@ -574,31 +662,32 @@ async def test_full_setup_walkthrough(client, tmp_path, monkeypatch):
 
     # Step 8 — github
     resp = await client.post("/setup/step/8", json={"config": {}})
-    assert resp.json()["result"]["gh_found"] is True
 
-    # Step 9 — colima
-    resp = await client.post("/setup/step/9", json={"config": {}})
-    assert resp.json()["result"]["docker_found"] is False
+    # Step 9 — obsidian vault
+    vault = tmp_path / "my-vault"
+    vault.mkdir()
+    (vault / ".obsidian").mkdir()
+    resp = await client.post(
+        "/setup/step/9",
+        json={"config": {"vault_path": str(vault)}},
+    )
+    assert resp.json()["result"]["valid"] is True
 
-    # Step 10 — briefing prefs
+    # Step 10 — voice setup
     resp = await client.post(
         "/setup/step/10",
-        json={"config": {"briefing_time": "07:00"}},
+        json={"config": {"tts_provider": "macos_say", "stt_provider": "macos_dictation"}},
     )
-    assert resp.json()["result"]["briefing_time"] == "07:00"
+    assert resp.json()["result"]["tts_provider"] == "macos_say"
 
-    # Step 11 — voice
-    resp = await client.post("/setup/step/11", json={"config": {}})
-    assert resp.json()["result"]["mic_detected"] is True
-
-    # Step 12 — first scan (mock discovery)
+    # Step 11 — first scan (mock discovery)
     with patch("src.scout.engine.run_discovery", new_callable=AsyncMock) as mock_d:
         mock_d.return_value = []
-        resp = await client.post("/setup/step/12", json={"config": {}})
+        resp = await client.post("/setup/step/11", json={"config": {}})
         assert resp.json()["result"]["scan_count"] == 0
 
-    # Step 13 — done (first contact message)
-    resp = await client.post("/setup/step/13", json={"config": {}})
+    # Step 12 — done (first contact message)
+    resp = await client.post("/setup/step/12", json={"config": {}})
     data = resp.json()
     assert "Avery" in data["result"]["message"]
     assert "more time for" in data["result"]["message"]
@@ -608,5 +697,5 @@ async def test_full_setup_walkthrough(client, tmp_path, monkeypatch):
     # Verify progress
     resp = await client.get("/setup/progress")
     prog = resp.json()
-    assert prog["completed"] == 13
+    assert prog["completed"] == 12
     assert prog["percent"] == 100

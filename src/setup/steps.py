@@ -40,21 +40,20 @@ SUPPORTED_CHANNELS = [
 
 
 def create_setup_steps() -> list[SetupStep]:
-    """Return all 13 setup steps with correct metadata."""
+    """Return all 12 setup steps with correct metadata."""
     definitions = [
         (1, "welcome", "Welcome to JARVIS", True),
         (2, "personalization", "What should I call you?", False),
         (3, "communication", "How should I reach you?", False),
-        (4, "claude_connection", "Detect Claude Desktop and subscription tier", True),
-        (5, "contacts", "macOS Contacts access and nickname map", False),
+        (4, "claude_connection", "Register JARVIS in Claude Desktop", True),
+        (5, "contacts", "Auto-import macOS Contacts", False),
         (6, "services", "Choose service ecosystems", False),
         (7, "scout_sources", "Select Scout discovery sources", False),
         (8, "github_auth", "GitHub CLI or PAT authentication", False),
-        (9, "colima_check", "Check Docker/Colima availability", False),
-        (10, "briefing_prefs", "Briefing time and Obsidian vault", False),
-        (11, "voice_setup", "Test microphone and TTS", False),
-        (12, "first_scan", "Run initial Scout discovery", False),
-        (13, "done", "Setup complete", False),
+        (9, "obsidian_vault", "Link Obsidian vault", False),
+        (10, "voice_setup", "Choose voice providers (TTS + STT)", False),
+        (11, "first_scan", "Run initial Scout discovery", False),
+        (12, "done", "Setup complete", False),
     ]
     return [
         SetupStep(number=n, name=name, description=desc, required=req)

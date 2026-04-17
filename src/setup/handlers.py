@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
+import subprocess
 from pathlib import Path
 
 import toml
 
 from src.setup.steps import SUPPORTED_CHANNELS, SetupState, complete_step
+
+logger = logging.getLogger(__name__)
 
 CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
 
@@ -49,31 +55,76 @@ async def handle_personalization(
 async def handle_communication(
     state: SetupState, config: dict
 ) -> tuple[SetupState, dict]:
-    """Step 3 — Choose preferred communication channels.
+    """Step 3 — Choose channels and save per-channel credentials.
 
-    Accepts:
-        channels: list of channel names (e.g. ["imessage", "telegram"])
-        primary: the main channel for important notifications
+    Accepts channel-specific credentials like:
+        telegram_bot_token, telegram_chat_id
+        discord_bot_token, discord_server_id, discord_channel_id
+        slack_bot_token, slack_channel_id
+        email_smtp_host, email_smtp_port, email_username, email_password, email_imap_host, email_recipient
+        imessage_target
     """
     channels = config.get("channels", ["macos_notifications"])
     primary = config.get("primary", channels[0] if channels else "macos_notifications")
 
-    # Validate channels
     valid = [c for c in channels if c in SUPPORTED_CHANNELS]
     if not valid:
         valid = ["macos_notifications"]
     if primary not in valid:
         primary = valid[0]
 
-    # Save to config/communication.toml
-    comm_path = CONFIG_DIR / "communication.toml"
-    comm_path.parent.mkdir(parents=True, exist_ok=True)
-    data = {
+    data: dict = {
         "channels": {
             "primary": primary,
             "enabled": valid,
         },
     }
+
+    # Per-channel credential sections
+    if "telegram" in valid:
+        tg = {}
+        if config.get("telegram_bot_token"):
+            tg["bot_token"] = config["telegram_bot_token"]
+        if config.get("telegram_chat_id"):
+            tg["chat_id"] = config["telegram_chat_id"]
+        if tg:
+            data["telegram"] = tg
+
+    if "discord" in valid:
+        dc = {}
+        if config.get("discord_bot_token"):
+            dc["bot_token"] = config["discord_bot_token"]
+        if config.get("discord_server_id"):
+            dc["server_id"] = config["discord_server_id"]
+        if config.get("discord_channel_id"):
+            dc["channel_id"] = config["discord_channel_id"]
+        if dc:
+            data["discord"] = dc
+
+    if "slack" in valid:
+        sl = {}
+        if config.get("slack_bot_token"):
+            sl["bot_token"] = config["slack_bot_token"]
+        if config.get("slack_channel_id"):
+            sl["channel_id"] = config["slack_channel_id"]
+        if sl:
+            data["slack"] = sl
+
+    if "email" in valid:
+        em = {}
+        for key in ("smtp_host", "smtp_port", "username", "password", "imap_host", "recipient"):
+            val = config.get(f"email_{key}")
+            if val:
+                em[key] = val
+        if em:
+            data["email"] = em
+
+    imessage_target = config.get("imessage_target", "")
+    if imessage_target and "imessage" in valid:
+        data["imessage"] = {"target": imessage_target}
+
+    comm_path = CONFIG_DIR / "communication.toml"
+    comm_path.parent.mkdir(parents=True, exist_ok=True)
     with open(comm_path, "w") as f:
         toml.dump(data, f)
 
@@ -81,6 +132,7 @@ async def handle_communication(
         "primary": primary,
         "enabled": valid,
         "available": SUPPORTED_CHANNELS,
+        "imessage_target": imessage_target if "imessage" in valid else None,
         "message": f"I'll reach you via {primary}. {len(valid)} channel(s) enabled.",
     }
     state = complete_step(state, 3, result)
@@ -90,26 +142,107 @@ async def handle_communication(
 async def handle_claude_connection(
     state: SetupState, config: dict
 ) -> tuple[SetupState, dict]:
-    """Step 4 — Detect Claude Desktop (mocked)."""
+    """Step 4 — Register JARVIS MCP server in Claude Desktop config.
+
+    Writes the jarvis entry to ~/Library/Application Support/Claude/claude_desktop_config.json.
+    """
+    project_root = Path(__file__).resolve().parent.parent.parent
+    mcp_server_path = str(project_root / "src" / "mcp_server.py")
+
+    claude_config_path = (
+        Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+    )
+
+    registered = False
+    try:
+        claude_config_path.parent.mkdir(parents=True, exist_ok=True)
+        if claude_config_path.exists():
+            existing = json.loads(claude_config_path.read_text())
+        else:
+            existing = {}
+
+        mcp_servers = existing.setdefault("mcpServers", {})
+        mcp_servers["jarvis"] = {
+            "command": "python3",
+            "args": [mcp_server_path],
+        }
+
+        claude_config_path.write_text(json.dumps(existing, indent=2))
+        registered = True
+    except Exception as exc:
+        logger.warning("Could not register MCP server: %s", exc)
+
     result = {
-        "detected": True,
-        "tier": "pro",
-        "message": "Claude Desktop detected — Pro subscription active.",
+        "registered": registered,
+        "config_path": str(claude_config_path),
+        "message": "JARVIS registered in Claude Desktop." if registered else "Could not register MCP server.",
     }
     state = complete_step(state, 4, result)
     return state, result
 
 
 async def handle_contacts(state: SetupState, config: dict) -> tuple[SetupState, dict]:
-    """Step 5 — Store contact nickname mappings."""
-    nicknames = config.get("nicknames", {})
+    """Step 5 — Auto-import contacts from macOS Contacts.app.
 
+    Uses AppleScript to read names and numbers, saves to contacts_nicknames.toml.
+    """
+    contacts = []
+    try:
+        script = (
+            'tell application "Contacts"\n'
+            '    set output to ""\n'
+            '    repeat with p in people\n'
+            '        set n to name of p\n'
+            '        try\n'
+            '            set ph to value of first phone of p\n'
+            '        on error\n'
+            '            set ph to ""\n'
+            '        end try\n'
+            '        try\n'
+            '            set em to value of first email of p\n'
+            '        on error\n'
+            '            set em to ""\n'
+            '        end try\n'
+            '        set output to output & n & "\\t" & ph & "\\t" & em & linefeed\n'
+            '    end repeat\n'
+            '    return output\n'
+            'end tell'
+        )
+
+        def _run_applescript():
+            proc = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True, text=True, timeout=15,
+            )
+            return proc.stdout.strip() if proc.returncode == 0 else ""
+
+        raw = await asyncio.to_thread(_run_applescript)
+        for line in raw.split("\n"):
+            parts = line.split("\t")
+            if len(parts) >= 1 and parts[0].strip():
+                entry = {"name": parts[0].strip()}
+                if len(parts) >= 2 and parts[1].strip():
+                    entry["phone"] = parts[1].strip()
+                if len(parts) >= 3 and parts[2].strip():
+                    entry["email"] = parts[2].strip()
+                contacts.append(entry)
+    except Exception as exc:
+        logger.warning("Contact import failed: %s", exc)
+
+    # Save to config
     nicknames_path = CONFIG_DIR / "contacts_nicknames.toml"
     nicknames_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(nicknames_path, "w") as f:
-        toml.dump({"nicknames": nicknames}, f)
 
-    result = {"nickname_count": len(nicknames), "nicknames": nicknames}
+    # Also accept manual nicknames from config
+    nicknames = config.get("nicknames", {})
+    with open(nicknames_path, "w") as f:
+        toml.dump({"nicknames": nicknames, "imported_count": len(contacts)}, f)
+
+    result = {
+        "imported_count": len(contacts),
+        "nickname_count": len(nicknames),
+        "contacts": contacts[:10],  # Preview first 10
+    }
     state = complete_step(state, 5, result)
     return state, result
 
@@ -131,7 +264,6 @@ async def handle_scout_sources(
     sources_path = CONFIG_DIR / "scout_sources.toml"
     example_path = CONFIG_DIR / "scout_sources.example.toml"
 
-    # Load from existing or example
     if sources_path.exists():
         data = toml.load(sources_path)
     elif example_path.exists():
@@ -159,69 +291,120 @@ async def handle_scout_sources(
 async def handle_github_auth(
     state: SetupState, config: dict
 ) -> tuple[SetupState, dict]:
-    """Step 8 — Check for gh CLI (mocked)."""
+    """Step 8 — Check for gh CLI."""
+    import shutil
+
+    gh_found = shutil.which("gh") is not None
+    authenticated = False
+    if gh_found:
+        try:
+            proc = subprocess.run(
+                ["gh", "auth", "status"],
+                capture_output=True, text=True, timeout=5,
+            )
+            authenticated = proc.returncode == 0
+        except Exception:
+            pass
+
     result = {
-        "gh_found": True,
-        "authenticated": True,
-        "message": "GitHub CLI detected and authenticated.",
+        "gh_found": gh_found,
+        "authenticated": authenticated,
+        "message": "GitHub CLI detected and authenticated." if authenticated
+        else "GitHub CLI not found or not authenticated." if not gh_found
+        else "GitHub CLI found but not authenticated.",
     }
     state = complete_step(state, 8, result)
     return state, result
 
 
-async def handle_colima_check(
+async def handle_obsidian_vault(
     state: SetupState, config: dict
 ) -> tuple[SetupState, dict]:
-    """Step 9 — Check for Docker/Colima (mocked — not found)."""
+    """Step 9 — Link Obsidian vault path.
+
+    Validates the vault directory exists and has an .obsidian folder.
+    """
+    vault_path = config.get("vault_path", "")
+    valid = False
+    obsidian_mcp_found = False
+
+    if vault_path:
+        vp = Path(vault_path).expanduser()
+        if vp.exists() and (vp / ".obsidian").is_dir():
+            valid = True
+
+    # Save to jarvis.toml
+    jarvis_config_path = CONFIG_DIR / "jarvis.toml"
+    jarvis_config_path.parent.mkdir(parents=True, exist_ok=True)
+    jarvis_data: dict = {}
+    if jarvis_config_path.exists():
+        try:
+            jarvis_data = toml.load(jarvis_config_path)
+        except Exception:
+            pass
+    if valid:
+        jarvis_data.setdefault("obsidian", {})["vault_path"] = str(Path(vault_path).expanduser())
+    with open(jarvis_config_path, "w") as f:
+        toml.dump(jarvis_data, f)
+
     result = {
-        "docker_found": False,
-        "colima_found": False,
-        "offer_install": True,
-        "message": "Docker/Colima not found. Install recommended for sandbox testing.",
+        "vault_path": vault_path,
+        "valid": valid,
+        "message": f"Obsidian vault linked at {vault_path}" if valid
+        else "No valid Obsidian vault found." if vault_path
+        else "Obsidian vault not configured (can add later).",
     }
     state = complete_step(state, 9, result)
-    return state, result
-
-
-async def handle_briefing_prefs(
-    state: SetupState, config: dict
-) -> tuple[SetupState, dict]:
-    """Step 10 — Set briefing time and Obsidian vault path."""
-    briefing_time = config.get("briefing_time", "07:30")
-    obsidian_vault = config.get("obsidian_vault", None)
-
-    result = {
-        "briefing_time": briefing_time,
-        "obsidian_vault": obsidian_vault,
-        "message": f"Briefing scheduled for {briefing_time}.",
-    }
-    state = complete_step(state, 10, result)
     return state, result
 
 
 async def handle_voice_setup(
     state: SetupState, config: dict
 ) -> tuple[SetupState, dict]:
-    """Step 11 — Test mic and TTS (mocked)."""
-    result = {
-        "mic_detected": True,
-        "tts_working": True,
-        "voice_profile": "default",
-        "message": "Microphone detected. TTS engine ready.",
+    """Step 10 — Choose TTS and STT providers, save to voice.toml."""
+    tts_provider = config.get("tts_provider", "macos_say")
+    stt_provider = config.get("stt_provider", "macos_dictation")
+    tts_api_key = config.get("tts_api_key", "")
+    stt_api_key = config.get("stt_api_key", "")
+    tts_voice_id = config.get("tts_voice_id", "")
+
+    voice_data: dict = {
+        "tts": {"provider": tts_provider},
+        "stt": {
+            "provider": stt_provider,
+            "fallback_threshold": 0.7,
+        },
     }
-    state = complete_step(state, 11, result)
+    if tts_api_key:
+        voice_data["tts"]["api_key"] = tts_api_key
+    if tts_voice_id:
+        voice_data["tts"]["voice_id"] = tts_voice_id
+    if stt_api_key:
+        voice_data["stt"]["api_key"] = stt_api_key
+
+    voice_path = CONFIG_DIR / "voice.toml"
+    voice_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(voice_path, "w") as f:
+        toml.dump(voice_data, f)
+
+    result = {
+        "tts_provider": tts_provider,
+        "stt_provider": stt_provider,
+        "message": f"Voice: TTS via {tts_provider}, STT via {stt_provider}.",
+    }
+    state = complete_step(state, 10, result)
     return state, result
 
 
 async def handle_first_scan(
     state: SetupState, config: dict
 ) -> tuple[SetupState, dict]:
-    """Step 12 — Run Scout discovery immediately."""
+    """Step 11 — Run Scout discovery immediately."""
     from src.scout.engine import run_discovery
 
     cards = await run_discovery()
     result = {"scan_count": len(cards), "message": f"Scout found {len(cards)} items."}
-    state = complete_step(state, 12, result)
+    state = complete_step(state, 11, result)
     return state, result
 
 
@@ -248,7 +431,7 @@ def _build_first_contact(assistant_name: str, user_name: str) -> str:
 
 
 async def handle_done(state: SetupState, config: dict) -> tuple[SetupState, dict]:
-    """Step 13 — Send first-contact message and mark setup complete."""
+    """Step 12 — Send first-contact message and mark setup complete."""
     from src.setup.steps import get_step
 
     step2 = get_step(state, 2)
@@ -258,12 +441,10 @@ async def handle_done(state: SetupState, config: dict) -> tuple[SetupState, dict
     elif config.get("user_name"):
         user_name = config["user_name"]
 
-    # Pull assistant name from step 2 as well
     assistant_name = "JARVIS"
     if step2 and step2.result:
         assistant_name = step2.result.get("assistant_name", "JARVIS")
 
-    # Pull chosen communication channel from step 3
     step3 = get_step(state, 3)
     primary_channel = "macos_notifications"
     if step3 and step3.result:
@@ -271,7 +452,6 @@ async def handle_done(state: SetupState, config: dict) -> tuple[SetupState, dict
 
     first_contact = _build_first_contact(assistant_name, user_name)
 
-    # Dispatch via notification system
     try:
         from src.engine.notifications import Notification, send_notification
 
@@ -292,8 +472,14 @@ async def handle_done(state: SetupState, config: dict) -> tuple[SetupState, dict
         "sent_via": primary_channel,
         "dispatch": dispatch_result,
     }
-    state = complete_step(state, 13, result)
+    state = complete_step(state, 12, result)
     return state, result
+
+
+def check_docker_available() -> bool:
+    """Check whether Docker/Colima is available (utility, not a setup step)."""
+    import shutil
+    return shutil.which("docker") is not None
 
 
 STEP_HANDLERS: dict[int, callable] = {
@@ -305,9 +491,8 @@ STEP_HANDLERS: dict[int, callable] = {
     6: handle_services,
     7: handle_scout_sources,
     8: handle_github_auth,
-    9: handle_colima_check,
-    10: handle_briefing_prefs,
-    11: handle_voice_setup,
-    12: handle_first_scan,
-    13: handle_done,
+    9: handle_obsidian_vault,
+    10: handle_voice_setup,
+    11: handle_first_scan,
+    12: handle_done,
 }
