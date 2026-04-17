@@ -1,146 +1,289 @@
-# Jarvis MCP
+<p align="center">
+  <h1 align="center">JARVIS</h1>
+  <p align="center"><strong>Just A Rather Very Intelligent System</strong></p>
+  <p align="center">An MCP server that turns Claude Desktop into a personal AI assistant for macOS.</p>
+  <p align="center">
+    <a href="#install">Install</a> &nbsp;&bull;&nbsp;
+    <a href="#tools">41 Tools</a> &nbsp;&bull;&nbsp;
+    <a href="#usage">Usage</a> &nbsp;&bull;&nbsp;
+    <a href="#telegram">Telegram Bot</a> &nbsp;&bull;&nbsp;
+    <a href="#architecture">Architecture</a>
+  </p>
+</p>
 
-**An AI assistant that unifies Claude's intelligence with OS control, proactive tool discovery, and self-improvement — all in one conversation.**
-
-> *"What if Siri had Claude's brain, went hunting for tools you didn't know existed, and never made the same mistake twice?"*
-
-Free with any Claude subscription. Powered by Claude.
+> *"Perhaps if you used it for something other than impressing women, sir, it might hold a charge longer."*
 
 ---
 
-## What This Is
+**Free with any Claude subscription.** No extra API keys for core features. One config change and Claude becomes your butler.
 
-An MCP server for Claude Desktop that turns Claude into a full AI assistant with four pillars:
+## What It Does
 
-| Pillar | What It Does |
-|---|---|
-| **Brains** | Claude does the thinking — chat, reasoning, code, research, screen reading. Routes casual chat through Groq (free) by default, or your Claude sub if you prefer. |
-| **Hands** | Siri-style OS control — messages, calls, reminders, alarms, music, HomeKit, calendar. Works with Apple, Google Workspace, and Microsoft 365. |
-| **Scout** | Proactive discovery — finds MCP servers, plugins, and tools tailored to your stack. Sandbox-tests them before showing you. One-click install. |
-| **Lessons** | Self-improvement — learns from every correction, never repeats the same mistake. You approve every lesson before it's saved. |
+You talk to Claude Desktop like normal. JARVIS gives it 41 tools to actually *do things* on your Mac -- send messages, play music, check your calendar, dispatch coding agents, control smart home devices, and learn your preferences over time.
 
-**One conversation. No mode switching.** You talk, the assistant figures out whether to think, act, discover, or remember — and handles it behind the scenes.
+No mode switching. No separate apps. Just one conversation.
 
-## Quick Install
+## <a name="tools"></a>Tools (41)
+
+| Category | Tools | What You Get |
+|---|---|---|
+| **Briefing & Awareness** | `get_briefing` `get_weather` `get_status` | Morning briefing, weather, system health |
+| **Calendar** | `get_calendar_today` `add_calendar_event` | Read and create macOS Calendar events |
+| **Reminders** | `get_reminders` `set_reminder` | Read and create macOS Reminders |
+| **Email** | `get_unread_email` | Inbox summary from Mail.app |
+| **Messaging** | `send_imessage` `send_telegram` `send_notification` | iMessage, Telegram, macOS notifications |
+| **Contacts** | `lookup_contact` | Search macOS Contacts by name |
+| **Music** | `play_music` `pause_music` `skip_track` `set_volume` | Full Apple Music control |
+| **Alarms & Timers** | `set_alarm` `set_timer` | Alarms via Reminders, timers with notifications |
+| **HomeKit** | `homekit_control` | Smart home via Shortcuts integration |
+| **Apps** | `open_app` | Launch any macOS application |
+| **Notes** | `create_note` | Create notes in Notes.app |
+| **Maps** | `search_maps` | Search Apple Maps |
+| **Clipboard** | `get_clipboard` `set_clipboard` | Read/write the system clipboard |
+| **System** | `get_screen_time` `do_not_disturb` `open_url` | Uptime, Focus mode, URL opening |
+| **Voice** | `speak` `jarvis_say` `enable_voice_mode` `disable_voice_mode` | macOS TTS with toggle-able narration |
+| **Scout** | `run_scout` | Discover tools, repos, and news for your stack |
+| **Lessons** | `get_lessons` `learn` | Self-improvement -- remembers corrections |
+| **User Profile** | `get_user_profile` `remember_about_user` `remember_person` | Persistent memory about you and your people |
+| **Code Agents** | `dispatch_code_agent` `dispatch_background_agent` `check_background_agent` `list_projects` | Spawn Claude Code agents from chat |
+
+## <a name="install"></a>Quick Install
+
+**Prerequisites:** macOS, Python 3.12+, [Claude Desktop](https://claude.ai/download) with any subscription.
 
 ```bash
-brew install --cask jarvis-mcp
+# 1. Clone
+git clone https://github.com/averymkeller83-hub/jarvis-mcp.git
+cd jarvis-mcp
+
+# 2. Create venv and install
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
+
+# 3. Copy the example config
+cp config/jarvis.example.toml config/jarvis.toml
+
+# 4. Register with Claude Desktop
 ```
 
-First-run setup walks you through 12 steps (all skippable except welcome + Claude connection). Takes under 10 minutes.
-
-## What You Need
-
-- macOS (Apple Silicon recommended)
-- [Claude Desktop](https://claude.ai/download) with any subscription (Free, Pro, or Max)
-- That's it. Everything else is optional.
-
-## Architecture
+For step 4, open Claude Desktop's config file:
 
 ```
-Claude Desktop (your subscription)
-        │ MCP over stdio
-        ▼
-Jarvis MCP Extension (always works alone)
-  • Smart router    • Unified memory
-  • Screen reading  • Lessons read
-  • Workspace search
-        │ HTTPS auto-discover (127.0.0.1:7900)
-        ▼
-Jarvis Core Daemon (optional upgrade)
-  • FastAPI server    • Voice pipeline
-  • Scout agent       • Briefings
-  • OS integrations   • Lessons write
-  • CONTROL actions
+~/Library/Application Support/Claude/claude_desktop_config.json
 ```
 
-**Progressive enhancement:** The extension works standalone. Installing the optional Core daemon unlocks Hands, Scout, Lessons write, voice, and briefings. Each tier is a clean upgrade.
+Add the JARVIS server:
 
-## Features
+```json
+{
+  "mcpServers": {
+    "jarvis": {
+      "command": "python3",
+      "args": ["/path/to/jarvis-mcp/src/mcp_server.py"]
+    }
+  }
+}
+```
 
-### Unified Chat
-Everything happens in one conversation. Ask a question, refactor code, text someone, check your calendar, discover a new tool — all in the same thread. The router silently picks the right handler.
+Replace `/path/to/jarvis-mcp` with your actual clone path. Restart Claude Desktop. Done.
+
+## Configuration
+
+### Location & Identity
+
+Edit `config/jarvis.toml`:
+
+```toml
+[personality]
+user_display_name = "Sir"          # What JARVIS calls you
+assistant_name = "JARVIS"          # The assistant's name
+
+[location]
+name = "Bloomington, IN"
+latitude = 39.1653
+longitude = -86.5264
+
+[voice]
+enabled = false                    # Start with voice off
+voice_name = "Daniel"              # macOS TTS voice (Daniel, Samantha, Alex, etc.)
+```
+
+### Messaging
+
+Create `config/communication.toml` for iMessage and Telegram:
+
+```toml
+[channels]
+primary = "telegram"
+enabled = ["telegram", "macos_notifications", "imessage"]
+
+[imessage]
+allowed_senders = ["+15551234567"]
+
+[telegram]
+bot_token = "YOUR_BOT_TOKEN"
+chat_id = "YOUR_CHAT_ID"
+```
 
 ### Voice
-- **Listen:** Whisper.cpp (local, private) with cloud fallback
-- **Speak:** Fish Audio TTS with local phrase cache (instant on common phrases)
-- **Activate:** `⌥Space` hotkey or optional on-device wake word
 
-### Morning Briefing
-8-section daily briefing delivered to Obsidian + Telegram + voice:
-Weather → Calendar → Email → GitHub → News → Reminders → Scout Discover → Lessons Digest
+Voice is off by default. Toggle it at runtime:
 
-Empty sections are silently skipped. Light day = short briefing.
+```
+"JARVIS, enable voice mode."
+"Switch to the Samantha voice."
+"Go quiet."
+```
 
-### Services
-Supports Apple, Google Workspace, and Microsoft 365 simultaneously. Smart routing by contact — if David is in your Google Contacts, email goes through Gmail automatically.
+Or set `voice.enabled = true` in `jarvis.toml` to start with it on.
 
-### Privacy
-- All data stays on your machine by default
-- Voice audio processed locally (cloud fallback only on low confidence)
-- Scout sources are opt-in — nothing scans until you say so
-- Optional anonymous telemetry (off by default, fully transparent)
-- One-command uninstall exports your data before removing everything
+## <a name="usage"></a>Usage Examples
 
-## Personalization
+Just talk to Claude Desktop. JARVIS handles the rest.
 
-- Name the assistant anything you want
-- Pick what it calls you
-- Choose your voice profile
-- Configure notification routing per event type
-- Move CONTROL actions between instant-fire and confirm-first tiers
-- All settings available via menubar, web dashboard, or config files
+| You say | What happens |
+|---|---|
+| *"What's on my calendar today?"* | Reads macOS Calendar |
+| *"Text Mom I'll be late for dinner"* | Looks up Mom in Contacts, sends iMessage |
+| *"Play something by Radiohead"* | Searches Apple Music, starts playback |
+| *"Set a timer for 15 minutes"* | Background timer with notification |
+| *"Give me my morning briefing"* | Weather + calendar + email + news + reminders |
+| *"Turn off the living room lights"* | HomeKit via Shortcuts |
+| *"What's in my clipboard?"* | Reads clipboard contents |
+| *"Remember that I prefer dark mode in all apps"* | Saves to your user profile |
+| *"Fix the login bug in the clawwork project"* | Dispatches a Claude Code agent |
+| *"Run a scout scan"* | Discovers tools and repos relevant to your stack |
+| *"What have you learned so far?"* | Lists all stored lessons |
+| *"Send a Telegram message: I'm on my way"* | Sends via your JARVIS Telegram bot |
+| *"Enable voice mode"* | JARVIS starts narrating responses aloud |
 
-## Coming in v1.5: Agent Orchestration + Mission Control
+## <a name="architecture"></a>Architecture
 
-The next phase adds the Claude Agent SDK to turn single-shot commands into autonomous multi-step workflows:
+```
+┌──────────────────────────────┐
+│      Claude Desktop          │  Your subscription. The brain.
+│      (any plan)              │
+└──────────┬───────────────────┘
+           │ MCP (stdio)
+           ▼
+┌──────────────────────────────┐
+│      JARVIS MCP Server       │  41 tools. Python + FastMCP.
+│      src/mcp_server.py       │  Talks to macOS via AppleScript.
+├──────────────────────────────┤
+│  briefing/  calendar  email  │
+│  music  reminders  contacts  │
+│  messaging  homekit  voice   │
+│  scout  lessons  clipboard   │
+│  code agents  maps  notes    │
+└──────────┬───────────────────┘
+           │
+     ┌─────┴─────┐
+     ▼           ▼
+  macOS APIs   Claude Code
+  (osascript)  (agent dispatch)
+```
 
-- **Multi-step chains** — "Research competitors, draft a summary email, and text me when it's done" runs autonomously across Brains, Hands, and Lessons
-- **Persistent background agents** — "Monitor my CI and ping me if anything breaks" survives across sessions
-- **Mission Control dashboard** — real-time visual monitoring of every active agent: what it's working on, what step it's on, results as they come in
-- **Web-accessible Mission Control** — check on your agents from your phone, not just your Mac
+JARVIS is a single MCP server. Claude Desktop connects to it over stdio. Every tool calls macOS directly via AppleScript/osascript -- no intermediate daemon required. Code agents are dispatched by shelling out to the Claude CLI.
+
+## Lean vs. Full Config
+
+Two pre-built Claude Desktop configs for different needs:
+
+| Config | MCP Servers | Use Case |
+|---|---|---|
+| **Lean** | 3 (JARVIS + GitHub + Memory) | Daily driver. Fast. Low token overhead. |
+| **Full** | 8 (+ Filesystem, Notion, Obsidian, Playwright, Context7) | Dev mode. All tools loaded. |
+
+Switch between them:
+
+```bash
+./scripts/switch-config.sh lean    # Daily JARVIS
+./scripts/switch-config.sh full    # Dev mode
+# Restart Claude Desktop after switching.
+```
+
+## <a name="telegram"></a>Telegram Bot
+
+Two-way access to JARVIS from your phone.
+
+### Setup
+
+1. Create a bot via [@BotFather](https://t.me/botfather) on Telegram
+2. Get your chat ID (message [@userinfobot](https://t.me/userinfobot))
+3. Add both to `config/communication.toml`:
+   ```toml
+   [telegram]
+   bot_token = "123456:ABC-DEF..."
+   chat_id = "your_chat_id"
+   ```
+4. Run the bot:
+   ```bash
+   python3 -m src.telegram_bot
+   ```
+
+The bot routes your messages through Claude with JARVIS personality and tools. Keep it running as a background service or use the included LaunchAgent plist in `scripts/`.
+
+## Scout Discovery
+
+Scout scans sources you opt into and surfaces tools, repos, and news relevant to your stack.
+
+Configure sources in `config/scout_sources.toml`:
+
+```toml
+[sources.github_repos]
+enabled = true
+cadence = "hourly"
+
+[sources.hackernews]
+enabled = true
+cadence = "daily"
+min_score = 100
+```
+
+Available sources: Anthropic Changelog, Claude Plugin Marketplace, MCP Registry, GitHub Repos, GitHub Trending, RSS (curated + custom), Hacker News.
 
 ## Project Structure
 
 ```
 src/
-  brain/       # Router, classification, model routing
-  hands/       # CONTROL surface, AppleScript, OS integrations
-  scout/       # Source scanning, sandbox testing, scoring, cards
-  lessons/     # Capture, approval, retrieval, pruning
-  voice/       # STT (Whisper), TTS (Fish Audio), activation
-  briefing/    # Composer, Obsidian writer, delivery
-  engine/      # Proactive scheduler, background tasks, notifications
-  setup/       # 12-step first-run setup flow
-  settings/    # Settings manager, web dashboard, TOML config
-  integrations/  # Weather, RSS, GitHub, Apple/Google/Microsoft connectors
-config/        # Example TOML configs (user copies and customizes)
-docs/specs/    # Locked v1 spec (550+ lines, 30+ decisions)
-tests/         # Test suite (538+ tests)
-scripts/       # Utility scripts
+  mcp_server.py     # The MCP server -- all 41 tools
+  telegram_bot.py   # Two-way Telegram bot
+  briefing/         # Morning briefing composer
+  brain/            # Router and classification
+  hands/            # AppleScript / OS integrations
+  scout/            # Discovery engine
+  lessons/          # Correction capture and retrieval
+  chat/             # User profile and history
+  voice/            # TTS pipeline
+  engine/           # Background tasks and scheduling
+  setup/            # First-run setup flow
+  settings/         # Settings manager
+  integrations/     # Weather, RSS, GitHub connectors
+config/             # TOML configs (copy examples, customize)
+scripts/            # Config switcher, LaunchAgent installer, log rotation
+tests/              # Test suite
 ```
-
-## Status
-
-**v1 spec is locked.** Implementation in progress — 538 tests passing across all pillars. See [`docs/specs/2026-04-15-jarvis-v1-north-star.md`](docs/specs/2026-04-15-jarvis-v1-north-star.md) for the complete spec.
-
-### Roadmap
-
-| Phase | Scope | Status |
-|---|---|---|
-| v1 — Mac Core | Extension + daemon + Hands + Scout + Lessons + voice + briefings | Building |
-| v1.5 — Agent Orchestration | Claude Agent SDK integration + Mission Control dashboard — multi-step agent chains, persistent background agents, live visual monitoring of agent status/progress/results | Planned |
-| v2 — Phone Reach | "Hey Siri, Jarvis..." + relay server + AirPods + CarPlay + web-accessible Mission Control | Planned |
-| v3 — Native iOS | iOS app + Watch + tap-to-talk + team/multi-user features | Planned |
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Short version:
+
+1. Fork and branch
+2. Read the spec at `docs/specs/`
+3. One PR, one thing
+4. Tests required
+5. No walls of text
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+[Apache 2.0](LICENSE)
+
+## Credits
+
+Built by [Avery Keller](https://github.com/averymkeller83-hub).
+
+Powered by [Claude](https://claude.ai) and the [Model Context Protocol](https://modelcontextprotocol.io).
 
 ---
 
-*Powered by [Claude](https://claude.ai) by Anthropic.*
+*"Will that be all, sir?"*
