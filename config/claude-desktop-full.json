@@ -4,7 +4,10 @@
       "command": "python3",
       "args": [
         "/Users/averykeller/Desktop/projects/jarvis-mcp/src/mcp_server.py"
-      ]
+      ],
+      "env": {
+        "PYTHONPATH": "/Users/averykeller/Desktop/projects/jarvis-mcp"
+      }
     },
     "github": {
       "command": "npx",

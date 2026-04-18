@@ -1006,6 +1006,146 @@ async def open_url(url: str) -> str:
     return f"Failed to open URL: {stderr.decode()}"
 
 
+# ── Scheduled Tasks (LaunchAgents) ──────────────────────────────────
+
+_LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
+_TASK_PREFIX = "com.jarvis.task."
+
+
+def _task_plist_path(name: str) -> Path:
+    safe_name = name.replace(" ", "-").replace("/", "-").lower()
+    return _LAUNCH_AGENTS_DIR / f"{_TASK_PREFIX}{safe_name}.plist"
+
+
+def _build_plist(name: str, interval_minutes: int, task_prompt: str) -> str:
+    """Build a LaunchAgent plist that runs a Claude CLI prompt on a schedule."""
+    safe_name = name.replace(" ", "-").replace("/", "-").lower()
+    label = f"{_TASK_PREFIX}{safe_name}"
+    interval_seconds = interval_minutes * 60
+    project_root = str(Path(__file__).resolve().parent.parent)
+
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{label}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{_CLAUDE_BIN}</string>
+        <string>--dangerously-skip-permissions</string>
+        <string>-p</string>
+        <string>{task_prompt}</string>
+        <string>--output-format</string>
+        <string>json</string>
+        <string>--max-turns</string>
+        <string>10</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>{project_root}</string>
+    <key>StartInterval</key>
+    <integer>{interval_seconds}</integer>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>{project_root}/logs/task-{safe_name}.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>{project_root}/logs/task-{safe_name}.stderr.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONPATH</key>
+        <string>{project_root}</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/Users/averykeller/.npm-global/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>"""
+
+
+@mcp.tool()
+async def schedule_task(name: str, interval_minutes: int, task: str) -> str:
+    """Schedule a recurring JARVIS task that runs automatically.
+
+    Creates a macOS LaunchAgent that runs the task on a timer using Claude CLI.
+
+    Args:
+        name: Short name for the task (e.g. "email-check", "morning-briefing").
+        interval_minutes: How often to run, in minutes (e.g. 60 for hourly, 120 for every 2 hours).
+        task: What to do each time (e.g. "Check unread emails and send a Telegram summary if anything important").
+    """
+    plist_path = _task_plist_path(name)
+
+    # Ensure logs directory exists
+    logs_dir = Path(__file__).resolve().parent.parent / "logs"
+    logs_dir.mkdir(exist_ok=True)
+
+    # Write the plist
+    plist_content = _build_plist(name, interval_minutes, task)
+    plist_path.write_text(plist_content)
+
+    # Load the agent
+    proc = await asyncio.create_subprocess_exec(
+        "launchctl", "load", str(plist_path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+
+    if proc.returncode == 0:
+        return f"Scheduled: '{name}' — runs every {interval_minutes} minutes.\nTask: {task}"
+    return f"Created plist but failed to load: {stderr.decode()}"
+
+
+@mcp.tool()
+async def list_scheduled_tasks() -> str:
+    """List all JARVIS scheduled tasks."""
+    _LAUNCH_AGENTS_DIR.mkdir(exist_ok=True)
+    tasks = list(_LAUNCH_AGENTS_DIR.glob(f"{_TASK_PREFIX}*.plist"))
+
+    if not tasks:
+        return "No scheduled tasks."
+
+    lines = [f"{len(tasks)} scheduled task(s):\n"]
+    for plist_path in tasks:
+        name = plist_path.stem.replace(_TASK_PREFIX, "")
+        # Check if loaded
+        proc = await asyncio.create_subprocess_exec(
+            "launchctl", "list", f"{_TASK_PREFIX}{name}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+        status = "running" if proc.returncode == 0 else "stopped"
+        lines.append(f"• **{name}** — {status}")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def remove_scheduled_task(name: str) -> str:
+    """Remove a JARVIS scheduled task.
+
+    Args:
+        name: The task name used when it was created.
+    """
+    plist_path = _task_plist_path(name)
+
+    if not plist_path.exists():
+        return f"No task found named '{name}'."
+
+    # Unload first
+    proc = await asyncio.create_subprocess_exec(
+        "launchctl", "unload", str(plist_path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    await proc.communicate()
+
+    # Delete the plist
+    plist_path.unlink()
+    return f"Removed scheduled task: '{name}'"
+
+
 # ── Run ─────────────────────────────────────────────────────────────
 
 
