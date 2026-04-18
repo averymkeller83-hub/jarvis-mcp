@@ -845,11 +845,13 @@ async def dispatch_background_agent(task: str, project: str = "jarvis-mcp", max_
             _background_agents[agent_id]["result"] = str(e)
             notify_body = f"Failed: {task[:80]}"
 
-        # Send macOS notification
+        # Send macOS notification (must pipe stdout/stderr to avoid corrupting MCP transport)
         escaped = notify_body.replace('"', '\\"')
         proc2 = await asyncio.create_subprocess_exec(
             "osascript", "-e",
             f'display notification "{escaped}" with title "JARVIS Agent [{agent_id}]" sound name "Glass"',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
         await proc2.communicate()
 
